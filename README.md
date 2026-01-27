@@ -19,17 +19,10 @@
 
 ## ✨ Features
 
-### 🧠 AI-Powered Semantic Search
-- **Vector-based similarity search** over your entire research library
-- **Multiple embedding models**: Default (free), OpenAI, and Gemini options
-- **Intelligent results** with similarity scores and contextual matching
-- **Auto-updating database** with configurable sync schedules
-
 ### 🔍 Search Your Library
 - Find papers, articles, and books by title, author, or content
 - Perform complex searches with multiple criteria
 - Browse collections, tags, and recent additions
-- **NEW**: Semantic search for conceptual and topic-based discovery
 
 ### 📚 Access Your Content
 - Retrieve detailed metadata for any item
@@ -89,62 +82,6 @@ zotero-mcp update --check-only
 zotero-mcp update
 ```
 
-## 🧠 Semantic Search
-
-Zotero MCP now includes powerful AI-powered semantic search capabilities that let you find research based on concepts and meaning, not just keywords.
-
-### Setup Semantic Search
-
-During setup or separately, configure semantic search:
-
-```bash
-# Configure during initial setup (recommended)
-zotero-mcp setup
-
-# Or configure semantic search separately
-zotero-mcp setup --semantic-config-only
-```
-
-**Available Embedding Models:**
-- **Default (all-MiniLM-L6-v2)**: Free, runs locally, good for most use cases
-- **OpenAI**: Better quality, requires API key (`text-embedding-3-small` or `text-embedding-3-large`)
-- **Gemini**: Better quality, requires API key (`models/text-embedding-004` or experimental models)
-
-**Update Frequency Options:**
-- **Manual**: Update only when you run `zotero-mcp update-db`
-- **Auto on startup**: Update database every time the server starts
-- **Daily**: Update once per day automatically
-- **Every N days**: Set custom interval
-
-### Using Semantic Search
-
-After setup, initialize your search database:
-
-```bash
-# Build the semantic search database (fast, metadata-only)
-zotero-mcp update-db
-
-# Build with full-text extraction (slower, more comprehensive)
-zotero-mcp update-db --fulltext
-
-# Use your custom zotero.sqlite path
-zotero-mcp update-db --fulltext --db-path "/Your_custom_path/zotero.sqlite"
-
-If you have embedding confilts when using `zotero-mcp update-db --fulltext`, use `--force-rebuild` to force a rebuild.
-
-# Check database status
-zotero-mcp db-status
-```
-
-**Example Semantic Queries in your AI assistant:**
-- *"Find research similar to machine learning concepts in neuroscience"*
-- *"Papers that discuss climate change impacts on agriculture"*
-- *"Research related to quantum computing applications"*
-- *"Studies about social media influence on mental health"*
-- *"Find papers conceptually similar to this abstract: [paste abstract]"*
-
-The semantic search provides similarity scores and finds papers based on conceptual understanding, not just keyword matching.
-
 ## 🖥️ Setup & Usage
 
 Full documentation is available at [Zotero MCP docs](https://stevenyuyy.us/zotero-mcp/).
@@ -196,9 +133,6 @@ Example prompts:
 - "Show me papers tagged '#Arm' excluding those with '#Crypt' in my library"
 - "Search for papers on operating system with tag '#Arm'"
 - "Export the BibTeX citation for papers on machine learning"
-- **"Find papers conceptually similar to deep learning in computer vision"** *(semantic search)*
-- **"Research that relates to the intersection of AI and healthcare"** *(semantic search)*
-- **"Papers that discuss topics similar to this abstract: [paste text]"** *(semantic search)*
 
 ### For Cherry Studio
 
@@ -243,16 +177,6 @@ zotero-mcp setup --no-local --api-key YOUR_API_KEY --library-id YOUR_LIBRARY_ID
 - `ZOTERO_LIBRARY_ID`: Your Zotero library ID (for web API)
 - `ZOTERO_LIBRARY_TYPE`: The type of library (user or group, default: user)
 
-**Semantic Search:**
-- `ZOTERO_EMBEDDING_MODEL`: Embedding model to use (default, openai, gemini)
-- `OPENAI_API_KEY`: Your OpenAI API key (for OpenAI embeddings)
-- `OPENAI_EMBEDDING_MODEL`: OpenAI model name (text-embedding-3-small, text-embedding-3-large)
-- `OPENAI_BASE_URL`: Custom OpenAI endpoint URL (optional, for use with compatible APIs)
-- `GEMINI_API_KEY`: Your Gemini API key (for Gemini embeddings)
-- `GEMINI_EMBEDDING_MODEL`: Gemini model name (models/text-embedding-004, etc.)
-- `GEMINI_BASE_URL`: Custom Gemini endpoint URL (optional, for use with compatible APIs)
-- `ZOTERO_DB_PATH`: Custom `zotero.sqlite` path (optional)
-
 ### Command-Line Options
 
 ```bash
@@ -264,21 +188,12 @@ zotero-mcp serve --transport stdio|streamable-http|sse
 
 # Setup and configuration
 zotero-mcp setup --help                    # Get help on setup options
-zotero-mcp setup --semantic-config-only    # Configure only semantic search
 zotero-mcp setup-info                      # Show installation path and config info for MCP clients
 
 # Updates and maintenance
 zotero-mcp update                          # Update to latest version
 zotero-mcp update --check-only             # Check for updates without installing
 zotero-mcp update --force                  # Force update even if up to date
-
-# Semantic search database management
-zotero-mcp update-db                       # Update semantic search database (fast, metadata-only)
-zotero-mcp update-db --fulltext             # Update with full-text extraction (comprehensive but slower)
-zotero-mcp update-db --force-rebuild       # Force complete database rebuild
-zotero-mcp update-db --fulltext --force-rebuild  # Rebuild with full-text extraction
-zotero-mcp update-db --fulltext --db-path "your_path_to/zotero.sqlite" # Customize your zotero database path
-zotero-mcp db-status                       # Show database status and info
 
 # General
 zotero-mcp version                         # Show current version
@@ -299,11 +214,6 @@ For optimal annotation extraction, it is **highly recommended** to install the [
 The first time you use PDF annotation features, the necessary tools will be automatically downloaded.
 
 ## 📚 Available Tools
-
-### 🧠 Semantic Search Tools
-- `zotero_semantic_search`: AI-powered similarity search with embedding models
-- `zotero_update_search_database`: Manually update the semantic search database
-- `zotero_get_search_database_status`: Check database status and configuration
 
 ### 🔍 Search Tools
 - `zotero_search_items`: Search your library by keywords
@@ -332,15 +242,7 @@ The first time you use PDF annotation features, the necessary tools will be auto
 - **Can't connect to library**: Check your API key and library ID if using web API
 - **Full text not available**: Make sure you're using Zotero 7+ for local full-text access
 - **Local library limitations**: Some functionality (tagging, library modifications) may not work with local JS API. Consider using web library setup for full functionality. (See the [docs](docs/getting-started.md#local-library-limitations) for more info.)
-- **Installation/search option switching issues**: Database problems from changing install methods or search options can often be resolved with `zotero-mcp update-db --force-rebuild`
-
-### Semantic Search Issues
-- **"Missing required environment variables" when running update-db**: Run `zotero-mcp setup` to configure your environment, or the CLI will automatically load settings from your MCP client config (e.g., Claude Desktop)
-- **ChromaDB warnings**: Update to the latest version - deprecation warnings have been fixed
-- **Database update takes long**: By default, `update-db` is fast (metadata-only). For comprehensive indexing with full-text, use `--fulltext` flag. Use `--limit` parameter for testing: `zotero-mcp update-db --limit 100`
-- **Semantic search returns no results**: Ensure the database is initialized with `zotero-mcp update-db` and check status with `zotero-mcp db-status`
-- **Limited search quality**: For better semantic search results, use `zotero-mcp update-db --fulltext` to index full-text content (requires local Zotero setup)
-- **OpenAI/Gemini API errors**: Verify your API keys are correctly set and have sufficient credits/quota
+- **Installation/search option switching issues**: Database problems from changing install methods can often be resolved by reinstalling
 
 ### Update Issues
 - **Update command fails**: Check your internet connection and try `zotero-mcp update --force`

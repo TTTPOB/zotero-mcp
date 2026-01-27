@@ -26,36 +26,11 @@ from zotero_mcp.client import (
 )
 from zotero_mcp.utils import format_creators, clean_html
 
+
 @asynccontextmanager
 async def server_lifespan(server: FastMCP):
     """Manage server startup and shutdown lifecycle."""
     sys.stderr.write("Starting Zotero MCP server...\n")
-
-    # Check for semantic search auto-update on startup
-    try:
-        from zotero_mcp.semantic_search import create_semantic_search
-
-        config_path = Path.home() / ".config" / "zotero-mcp" / "config.json"
-
-        if config_path.exists():
-            search = create_semantic_search(str(config_path))
-
-            if search.should_update_database():
-                sys.stderr.write("Auto-updating semantic search database...\n")
-
-                # Run update in background to avoid blocking server startup
-                async def background_update():
-                    try:
-                        stats = search.update_database(extract_fulltext=False)
-                        sys.stderr.write(f"Database update completed: {stats.get('processed_items', 0)} items processed\n")
-                    except Exception as e:
-                        sys.stderr.write(f"Background database update failed: {e}\n")
-
-                # Start background task
-                asyncio.create_task(background_update())
-
-    except Exception as e:
-        sys.stderr.write(f"Warning: Could not check semantic search auto-update: {e}\n")
 
     yield {}
 
@@ -68,7 +43,7 @@ mcp = FastMCP("Zotero", lifespan=server_lifespan)
 
 @mcp.tool(
     name="zotero_search_items",
-    description="Search for items in your Zotero library, given a query string."
+    description="Search for items in your Zotero library, given a query string.",
 )
 def search_items(
     query: str,
@@ -77,7 +52,7 @@ def search_items(
     limit: int | str | None = 10,
     tag: list[str] | None = None,
     *,
-    ctx: Context
+    ctx: Context,
 ) -> str:
     """
     Search for items in your Zotero library.
@@ -100,7 +75,7 @@ def search_items(
         tag_condition_str = ""
         if tag:
             tag_condition_str = f" with tags: '{', '.join(tag)}'"
-        else :
+        else:
             tag = []
 
         ctx.info(f"Searching Zotero for '{query}'{tag_condition_str}")
@@ -110,7 +85,9 @@ def search_items(
             limit = int(limit)
 
         # Search using the query parameters
-        zot.add_parameters(q=query, qmode=qmode, itemType=item_type, limit=limit, tag=tag)
+        zot.add_parameters(
+            q=query, qmode=qmode, itemType=item_type, limit=limit, tag=tag
+        )
         results = zot.items()
 
         if not results:
@@ -140,7 +117,9 @@ def search_items(
             # Add abstract snippet if present
             if abstract := data.get("abstractNote"):
                 # Limit abstract length for search results
-                abstract_snippet = abstract[:200] + "..." if len(abstract) > 200 else abstract
+                abstract_snippet = (
+                    abstract[:200] + "..." if len(abstract) > 200 else abstract
+                )
                 output.append(f"**Abstract:** {abstract_snippet}")
 
             # Add tags if present
@@ -157,17 +136,18 @@ def search_items(
         ctx.error(f"Error searching Zotero: {str(e)}")
         return f"Error searching Zotero: {str(e)}"
 
+
 @mcp.tool(
     name="zotero_search_by_tag",
-    description="Search for items in your Zotero library by tag. " \
-    "Conditions are ANDed, each term supports disjunction`||` and exclusion`-`."
+    description="Search for items in your Zotero library by tag. "
+    "Conditions are ANDed, each term supports disjunction`||` and exclusion`-`.",
 )
 def search_by_tag(
     tag: list[str],
     item_type: str = "-attachment",
     limit: int | str | None = 10,
     *,
-    ctx: Context
+    ctx: Context,
 ) -> str:
     """
     Search for items in your Zotero library by tag。
@@ -231,7 +211,9 @@ def search_by_tag(
             # Add abstract snippet if present
             if abstract := data.get("abstractNote"):
                 # Limit abstract length for search results
-                abstract_snippet = abstract[:200] + "..." if len(abstract) > 200 else abstract
+                abstract_snippet = (
+                    abstract[:200] + "..." if len(abstract) > 200 else abstract
+                )
                 output.append(f"**Abstract:** {abstract_snippet}")
 
             # Add tags if present
@@ -248,16 +230,17 @@ def search_by_tag(
         ctx.error(f"Error searching Zotero: {str(e)}")
         return f"Error searching Zotero: {str(e)}"
 
+
 @mcp.tool(
     name="zotero_get_item_metadata",
-    description="Get detailed metadata for a specific Zotero item by its key."
+    description="Get detailed metadata for a specific Zotero item by its key.",
 )
 def get_item_metadata(
     item_key: str,
     include_abstract: bool = True,
     format: Literal["markdown", "bibtex"] = "markdown",
     *,
-    ctx: Context
+    ctx: Context,
 ) -> str:
     """
     Get detailed metadata for a Zotero item.
@@ -291,13 +274,9 @@ def get_item_metadata(
 
 @mcp.tool(
     name="zotero_get_item_fulltext",
-    description="Get the full text content of a Zotero item by its key."
+    description="Get the full text content of a Zotero item by its key.",
 )
-def get_item_fulltext(
-    item_key: str,
-    *,
-    ctx: Context
-) -> str:
+def get_item_fulltext(item_key: str, *, ctx: Context) -> str:
     """
     Get the full text content of a Zotero item.
 
@@ -330,9 +309,15 @@ def get_item_fulltext(
         # Try fetching full text from Zotero's full text index first
         try:
             full_text_data = zot.fulltext_item(attachment.key)
-            if full_text_data and "content" in full_text_data and full_text_data["content"]:
+            if (
+                full_text_data
+                and "content" in full_text_data
+                and full_text_data["content"]
+            ):
                 ctx.info("Successfully retrieved full text from Zotero's index")
-                return f"{metadata}\n\n---\n\n## Full Text\n\n{full_text_data['content']}"
+                return (
+                    f"{metadata}\n\n---\n\n## Full Text\n\n{full_text_data['content']}"
+                )
         except Exception as fulltext_error:
             ctx.info(f"Couldn't retrieve indexed full text: {str(fulltext_error)}")
 
@@ -345,8 +330,12 @@ def get_item_fulltext(
             import os
 
             with tempfile.TemporaryDirectory() as tmpdir:
-                file_path = os.path.join(tmpdir, attachment.filename or f"{attachment.key}.pdf")
-                zot.dump(attachment.key, filename=os.path.basename(file_path), path=tmpdir)
+                file_path = os.path.join(
+                    tmpdir, attachment.filename or f"{attachment.key}.pdf"
+                )
+                zot.dump(
+                    attachment.key, filename=os.path.basename(file_path), path=tmpdir
+                )
 
                 if os.path.exists(file_path):
                     ctx.info(f"Downloaded file to {file_path}, converting to markdown")
@@ -365,13 +354,9 @@ def get_item_fulltext(
 
 @mcp.tool(
     name="zotero_get_collections",
-    description="List all collections in your Zotero library."
+    description="List all collections in your Zotero library.",
 )
-def get_collections(
-    limit: int | str | None = None,
-    *,
-    ctx: Context
-) -> str:
+def get_collections(limit: int | str | None = None, *, ctx: Context) -> str:
     """
     List all collections in your Zotero library.
 
@@ -458,13 +443,10 @@ def get_collections(
 
 @mcp.tool(
     name="zotero_get_collection_items",
-    description="Get all items in a specific Zotero collection."
+    description="Get all items in a specific Zotero collection.",
 )
 def get_collection_items(
-    collection_key: str,
-    limit: int | str | None = 50,
-    *,
-    ctx: Context
+    collection_key: str, limit: int | str | None = 50, *, ctx: Context
 ) -> str:
     """
     Get all items in a specific Zotero collection.
@@ -528,13 +510,9 @@ def get_collection_items(
 
 @mcp.tool(
     name="zotero_get_item_children",
-    description="Get all child items (attachments, notes) for a specific Zotero item."
+    description="Get all child items (attachments, notes) for a specific Zotero item.",
 )
-def get_item_children(
-    item_key: str,
-    *,
-    ctx: Context
-) -> str:
+def get_item_children(item_key: str, *, ctx: Context) -> str:
     """
     Get all child items (attachments, notes) for a specific Zotero item.
 
@@ -641,14 +619,9 @@ def get_item_children(
 
 
 @mcp.tool(
-    name="zotero_get_tags",
-    description="Get all tags used in your Zotero library."
+    name="zotero_get_tags", description="Get all tags used in your Zotero library."
 )
-def get_tags(
-    limit: int | str | None = None,
-    *,
-    ctx: Context
-) -> str:
+def get_tags(limit: int | str | None = None, *, ctx: Context) -> str:
     """
     Get all tags used in your Zotero library.
 
@@ -696,13 +669,9 @@ def get_tags(
 
 @mcp.tool(
     name="zotero_get_recent",
-    description="Get recently added items to your Zotero library."
+    description="Get recently added items to your Zotero library.",
 )
-def get_recent(
-    limit: int | str = 10,
-    *,
-    ctx: Context
-) -> str:
+def get_recent(limit: int | str = 10, *, ctx: Context) -> str:
     """
     Get recently added items to your Zotero library.
 
@@ -765,7 +734,7 @@ def get_recent(
 
 @mcp.tool(
     name="zotero_batch_update_tags",
-    description="Batch update tags across multiple items matching a search query."
+    description="Batch update tags across multiple items matching a search query.",
 )
 def batch_update_tags(
     query: str,
@@ -773,7 +742,7 @@ def batch_update_tags(
     remove_tags: list[str] | str | None = None,
     limit: int | str = 50,
     *,
-    ctx: Context
+    ctx: Context,
 ) -> str:
     """
     Batch update tags across multiple items matching a search query.
@@ -803,15 +772,19 @@ def batch_update_tags(
         if add_tags and isinstance(add_tags, str):
             try:
                 import json
+
                 add_tags = json.loads(add_tags)
                 ctx.info(f"Parsed add_tags from JSON string: {add_tags}")
             except json.JSONDecodeError:
-                return f"Error: add_tags appears to be malformed JSON string: {add_tags}"
+                return (
+                    f"Error: add_tags appears to be malformed JSON string: {add_tags}"
+                )
 
         # Handle case where remove_tags might be a JSON string instead of list
         if remove_tags and isinstance(remove_tags, str):
             try:
                 import json
+
                 remove_tags = json.loads(remove_tags)
                 ctx.info(f"Parsed remove_tags from JSON string: {remove_tags}")
             except json.JSONDecodeError:
@@ -875,12 +848,16 @@ def batch_update_tags(
             if needs_update:
                 try:
                     item["data"]["tags"] = current_tags
-                    ctx.info(f"Updating item {item.get('key', 'unknown')} with tags: {current_tags}")
+                    ctx.info(
+                        f"Updating item {item.get('key', 'unknown')} with tags: {current_tags}"
+                    )
                     result = zot.update_item(item)
                     ctx.info(f"Update result: {result}")
                     updated_count += 1
                 except Exception as e:
-                    ctx.error(f"Failed to update item {item.get('key', 'unknown')}: {str(e)}")
+                    ctx.error(
+                        f"Failed to update item {item.get('key', 'unknown')}: {str(e)}"
+                    )
                     # Continue with other items instead of failing completely
                     skipped_count += 1
             else:
@@ -912,7 +889,7 @@ def batch_update_tags(
 
 @mcp.tool(
     name="zotero_advanced_search",
-    description="Perform an advanced search with multiple criteria."
+    description="Perform an advanced search with multiple criteria.",
 )
 def advanced_search(
     conditions: list[dict[str, str]],
@@ -921,7 +898,7 @@ def advanced_search(
     sort_direction: Literal["asc", "desc"] = "asc",
     limit: int | str = 50,
     *,
-    ctx: Context
+    ctx: Context,
 ) -> str:
     """
     Perform an advanced search with multiple criteria.
@@ -964,8 +941,12 @@ def advanced_search(
         # Build search conditions
         search_conditions = []
         for i, condition in enumerate(conditions):
-            if "field" not in condition or "operation" not in condition or "value" not in condition:
-                return f"Error: Condition {i+1} is missing required fields (field, operation, value)"
+            if (
+                "field" not in condition
+                or "operation" not in condition
+                or "value" not in condition
+            ):
+                return f"Error: Condition {i + 1} is missing required fields (field, operation, value)"
 
             # Map common field names to Zotero API fields if needed
             field = condition["field"]
@@ -980,25 +961,18 @@ def advanced_search(
                 # Convert year to partial date format for matching
                 value = str(value)
 
-            search_conditions.append({
-                "condition": field,
-                "operator": operation,
-                "value": value
-            })
+            search_conditions.append(
+                {"condition": field, "operator": operation, "value": value}
+            )
 
         # Add join mode condition
-        search_conditions.append({
-            "condition": "joinMode",
-            "operator": join_mode,
-            "value": ""
-        })
+        search_conditions.append(
+            {"condition": "joinMode", "operator": join_mode, "value": ""}
+        )
 
         # Create a saved search
         search_name = f"temp_search_{uuid.uuid4().hex[:8]}"
-        saved_search = zot.saved_search(
-            search_name,
-            search_conditions
-        )
+        saved_search = zot.saved_search(search_name, search_conditions)
 
         # Extract the search key from the result
         if not saved_search.get("success"):
@@ -1029,7 +1003,9 @@ def advanced_search(
         output.append(f"Join mode: {join_mode.upper()}")
 
         for i, condition in enumerate(conditions, 1):
-            output.append(f"{i}. {condition['field']} {condition['operation']} \"{condition['value']}\"")
+            output.append(
+                f'{i}. {condition["field"]} {condition["operation"]} "{condition["value"]}"'
+            )
 
         output.append("")
 
@@ -1057,7 +1033,9 @@ def advanced_search(
             # Add abstract snippet if present
             if abstract := data.get("abstractNote"):
                 # Limit abstract length for search results
-                abstract_snippet = abstract[:150] + "..." if len(abstract) > 150 else abstract
+                abstract_snippet = (
+                    abstract[:150] + "..." if len(abstract) > 150 else abstract
+                )
                 output.append(f"**Abstract:** {abstract_snippet}")
 
             # Add tags if present
@@ -1077,14 +1055,14 @@ def advanced_search(
 
 @mcp.tool(
     name="zotero_get_annotations",
-    description="Get all annotations for a specific item or across your entire Zotero library."
+    description="Get all annotations for a specific item or across your entire Zotero library.",
 )
 def get_annotations(
     item_key: str | None = None,
     use_pdf_extraction: bool = False,
     limit: int | str | None = None,
     *,
-    ctx: Context
+    ctx: Context,
 ) -> str:
     """
     Get annotations from your Zotero library.
@@ -1128,7 +1106,7 @@ def get_annotations(
                     from zotero_mcp.better_bibtex_client import (
                         ZoteroBetterBibTexAPI,
                         process_annotation,
-                        get_color_category
+                        get_color_category,
                     )
 
                     # Initialize Better BibTeX client
@@ -1144,13 +1122,19 @@ def get_annotations(
                             extra_field = parent["data"].get("extra", "")
                             for line in extra_field.split("\n"):
                                 if line.lower().startswith("citation key:"):
-                                    citation_key = line.replace("Citation Key:", "").strip()
+                                    citation_key = line.replace(
+                                        "Citation Key:", ""
+                                    ).strip()
                                     break
                                 elif line.lower().startswith("citationkey:"):
-                                    citation_key = line.replace("citationkey:", "").strip()
+                                    citation_key = line.replace(
+                                        "citationkey:", ""
+                                    ).strip()
                                     break
                         except Exception as e:
-                            ctx.warn(f"Error extracting citation key from Extra field: {e}")
+                            ctx.warn(
+                                f"Error extracting citation key from Extra field: {e}"
+                            )
 
                         # Fallback to searching by title if no citation key found
                         if not citation_key:
@@ -1165,8 +1149,8 @@ def get_annotations(
                                         ctx.info(f"Checking result: {result}")
 
                                         # Try to match with item key if possible
-                                        if result.get('citekey'):
-                                            citation_key = result['citekey']
+                                        if result.get("citekey"):
+                                            citation_key = result["citekey"]
                                             break
                             except Exception as e:
                                 ctx.warn(f"Error searching for citation key: {e}")
@@ -1176,18 +1160,33 @@ def get_annotations(
                             try:
                                 # Determine library
                                 library = "*"  # Default all libraries
-                                search_results = bibtex._make_request("item.search", [citation_key])
+                                search_results = bibtex._make_request(
+                                    "item.search", [citation_key]
+                                )
                                 if search_results:
-                                    matched_item = next((item for item in search_results if item.get('citekey') == citation_key), None)
+                                    matched_item = next(
+                                        (
+                                            item
+                                            for item in search_results
+                                            if item.get("citekey") == citation_key
+                                        ),
+                                        None,
+                                    )
                                     if matched_item:
-                                        library = matched_item.get('library', "*")
+                                        library = matched_item.get("library", "*")
 
                                 # Get attachments
-                                attachments = bibtex.get_attachments(citation_key, library)
+                                attachments = bibtex.get_attachments(
+                                    citation_key, library
+                                )
 
                                 # Process annotations from attachments
                                 for attachment in attachments:
-                                    annotations = bibtex.get_annotations_from_attachment(attachment)
+                                    annotations = (
+                                        bibtex.get_annotations_from_attachment(
+                                            attachment
+                                        )
+                                    )
 
                                     for anno in annotations:
                                         processed = process_annotation(anno, attachment)
@@ -1197,24 +1196,46 @@ def get_annotations(
                                                 "key": processed.get("id", ""),
                                                 "data": {
                                                     "itemType": "annotation",
-                                                    "annotationType": processed.get("type", "highlight"),
-                                                    "annotationText": processed.get("annotatedText", ""),
-                                                    "annotationComment": processed.get("comment", ""),
-                                                    "annotationColor": processed.get("color", ""),
+                                                    "annotationType": processed.get(
+                                                        "type", "highlight"
+                                                    ),
+                                                    "annotationText": processed.get(
+                                                        "annotatedText", ""
+                                                    ),
+                                                    "annotationComment": processed.get(
+                                                        "comment", ""
+                                                    ),
+                                                    "annotationColor": processed.get(
+                                                        "color", ""
+                                                    ),
                                                     "parentItem": item_key,
                                                     "tags": [],
-                                                    "_pdf_page": processed.get("page", 0),
-                                                    "_pageLabel": processed.get("pageLabel", ""),
-                                                    "_attachment_title": attachment.get("title", ""),
-                                                    "_color_category": get_color_category(processed.get("color", "")),
-                                                    "_from_better_bibtex": True
-                                                }
+                                                    "_pdf_page": processed.get(
+                                                        "page", 0
+                                                    ),
+                                                    "_pageLabel": processed.get(
+                                                        "pageLabel", ""
+                                                    ),
+                                                    "_attachment_title": attachment.get(
+                                                        "title", ""
+                                                    ),
+                                                    "_color_category": get_color_category(
+                                                        processed.get("color", "")
+                                                    ),
+                                                    "_from_better_bibtex": True,
+                                                },
                                             }
-                                            better_bibtex_annotations.append(bibtex_anno)
+                                            better_bibtex_annotations.append(
+                                                bibtex_anno
+                                            )
 
-                                ctx.info(f"Retrieved {len(better_bibtex_annotations)} annotations via Better BibTeX")
+                                ctx.info(
+                                    f"Retrieved {len(better_bibtex_annotations)} annotations via Better BibTeX"
+                                )
                             except Exception as e:
-                                ctx.warn(f"Error processing Better BibTeX annotations: {e}")
+                                ctx.warn(
+                                    f"Error processing Better BibTeX annotations: {e}"
+                                )
                 except Exception as bibtex_error:
                     ctx.warn(f"Error initializing Better BibTeX: {bibtex_error}")
 
@@ -1224,17 +1245,25 @@ def get_annotations(
                     # Get child annotations via Zotero API
                     children = zot.children(item_key)
                     zotero_api_annotations = [
-                        item for item in children
+                        item
+                        for item in children
                         if item.get("data", {}).get("itemType") == "annotation"
                     ]
-                    ctx.info(f"Retrieved {len(zotero_api_annotations)} annotations via Zotero API")
+                    ctx.info(
+                        f"Retrieved {len(zotero_api_annotations)} annotations via Zotero API"
+                    )
                 except Exception as api_error:
                     ctx.warn(f"Error retrieving Zotero API annotations: {api_error}")
 
             # PDF Extraction fallback
-            if use_pdf_extraction and not (better_bibtex_annotations or zotero_api_annotations):
+            if use_pdf_extraction and not (
+                better_bibtex_annotations or zotero_api_annotations
+            ):
                 try:
-                    from zotero_mcp.pdfannots_helper import extract_annotations_from_pdf, ensure_pdfannots_installed
+                    from zotero_mcp.pdfannots_helper import (
+                        extract_annotations_from_pdf,
+                        ensure_pdfannots_installed,
+                    )
                     import tempfile
                     import uuid
 
@@ -1243,8 +1272,10 @@ def get_annotations(
                         # Get PDF attachments
                         children = zot.children(item_key)
                         pdf_attachments = [
-                            item for item in children
-                            if item.get("data", {}).get("contentType") == "application/pdf"
+                            item
+                            for item in children
+                            if item.get("data", {}).get("contentType")
+                            == "application/pdf"
                         ]
 
                         # Extract annotations from PDFs
@@ -1255,11 +1286,15 @@ def get_annotations(
                                 zot.dump(att_key, file_path)
 
                                 if os.path.exists(file_path):
-                                    extracted = extract_annotations_from_pdf(file_path, tmpdir)
+                                    extracted = extract_annotations_from_pdf(
+                                        file_path, tmpdir
+                                    )
 
                                     for ext in extracted:
                                         # Skip empty annotations
-                                        if not ext.get("annotatedText") and not ext.get("comment"):
+                                        if not ext.get("annotatedText") and not ext.get(
+                                            "comment"
+                                        ):
                                             continue
 
                                         # Create Zotero-like annotation object
@@ -1267,30 +1302,48 @@ def get_annotations(
                                             "key": f"pdf_{att_key}_{ext.get('id', uuid.uuid4().hex[:8])}",
                                             "data": {
                                                 "itemType": "annotation",
-                                                "annotationType": ext.get("type", "highlight"),
-                                                "annotationText": ext.get("annotatedText", ""),
-                                                "annotationComment": ext.get("comment", ""),
+                                                "annotationType": ext.get(
+                                                    "type", "highlight"
+                                                ),
+                                                "annotationText": ext.get(
+                                                    "annotatedText", ""
+                                                ),
+                                                "annotationComment": ext.get(
+                                                    "comment", ""
+                                                ),
                                                 "annotationColor": ext.get("color", ""),
                                                 "parentItem": item_key,
                                                 "tags": [],
                                                 "_pdf_page": ext.get("page", 0),
                                                 "_from_pdf_extraction": True,
-                                                "_attachment_title": attachment.get("data", {}).get("title", "PDF")
-                                            }
+                                                "_attachment_title": attachment.get(
+                                                    "data", {}
+                                                ).get("title", "PDF"),
+                                            },
                                         }
 
                                         # Handle image annotations
-                                        if ext.get("type") == "image" and ext.get("imageRelativePath"):
-                                            pdf_anno["data"]["_image_path"] = os.path.join(tmpdir, ext.get("imageRelativePath"))
+                                        if ext.get("type") == "image" and ext.get(
+                                            "imageRelativePath"
+                                        ):
+                                            pdf_anno["data"]["_image_path"] = (
+                                                os.path.join(
+                                                    tmpdir, ext.get("imageRelativePath")
+                                                )
+                                            )
 
                                         pdf_annotations.append(pdf_anno)
 
-                        ctx.info(f"Retrieved {len(pdf_annotations)} annotations via PDF extraction")
+                        ctx.info(
+                            f"Retrieved {len(pdf_annotations)} annotations via PDF extraction"
+                        )
                 except Exception as pdf_error:
                     ctx.warn(f"Error during PDF annotation extraction: {pdf_error}")
 
             # Combine annotations from all sources
-            annotations = better_bibtex_annotations + zotero_api_annotations + pdf_annotations
+            annotations = (
+                better_bibtex_annotations + zotero_api_annotations + pdf_annotations
+            )
 
         else:
             # Retrieve all annotations in the library
@@ -1322,7 +1375,7 @@ def get_annotations(
                 try:
                     parent = zot.item(parent_key)
                     parent_title = parent["data"].get("title", "Untitled")
-                    parent_info = f" (from \"{parent_title}\")"
+                    parent_info = f' (from "{parent_title}")'
                 except Exception:
                     parent_info = f" (parent key: {parent_key})"
 
@@ -1339,7 +1392,9 @@ def get_annotations(
                 attachment_info = f" in {data['_attachment_title']}"
 
             # Build markdown annotation entry
-            output.append(f"## Annotation {i}{parent_info}{attachment_info}{source_info}")
+            output.append(
+                f"## Annotation {i}{parent_info}{attachment_info}{source_info}"
+            )
             output.append(f"**Type:** {anno_type}")
             output.append(f"**Key:** {anno_key}")
 
@@ -1363,7 +1418,9 @@ def get_annotations(
 
             # Image annotation
             if "_image_path" in data and os.path.exists(data["_image_path"]):
-                output.append("**Image:** This annotation includes an image (not displayed in this interface)")
+                output.append(
+                    "**Image:** This annotation includes an image (not displayed in this interface)"
+                )
 
             # Tags
             if tags := data.get("tags"):
@@ -1382,14 +1439,14 @@ def get_annotations(
 
 @mcp.tool(
     name="zotero_get_notes",
-    description="Retrieve notes from your Zotero library, with options to filter by parent item."
+    description="Retrieve notes from your Zotero library, with options to filter by parent item.",
 )
 def get_notes(
     item_key: str | None = None,
     limit: int | str | None = 20,
     truncate: bool = True,
     *,
-    ctx: Context
+    ctx: Context,
 ) -> str:
     """
     Retrieve notes from your Zotero library.
@@ -1416,9 +1473,15 @@ def get_notes(
         # Get notes
         notes = []
         if item_key:
-            notes = zot.children(item_key, **params) if not limit else zot.children(item_key, limit=limit, **params)
-        else: 
-            notes = zot.items(**params) if not limit else zot.items(limit=limit, **params)
+            notes = (
+                zot.children(item_key, **params)
+                if not limit
+                else zot.children(item_key, limit=limit, **params)
+            )
+        else:
+            notes = (
+                zot.items(**params) if not limit else zot.items(limit=limit, **params)
+            )
 
         if not notes:
             return f"No notes found{f' for item {item_key}' if item_key else ''}."
@@ -1436,7 +1499,7 @@ def get_notes(
                 try:
                     parent = zot.item(parent_key)
                     parent_title = parent["data"].get("title", "Untitled")
-                    parent_info = f" (from \"{parent_title}\")"
+                    parent_info = f' (from "{parent_title}")'
                 except Exception:
                     parent_info = f" (parent key: {parent_key})"
 
@@ -1472,14 +1535,9 @@ def get_notes(
 
 @mcp.tool(
     name="zotero_search_notes",
-    description="Search for notes across your Zotero library."
+    description="Search for notes across your Zotero library.",
 )
-def search_notes(
-    query: str,
-    limit: int | str | None = 20,
-    *,
-    ctx: Context
-) -> str:
+def search_notes(query: str, limit: int | str | None = 20, *, ctx: Context) -> str:
     """
     Search for notes in your Zotero library.
 
@@ -1512,7 +1570,7 @@ def search_notes(
             item_key=None,  # Search all annotations
             use_pdf_extraction=True,
             limit=limit or 20,
-            ctx=ctx
+            ctx=ctx,
         )
 
         # Parse the annotation results to extract annotation items
@@ -1546,11 +1604,7 @@ def search_notes(
 
             if query_lower in note_text:
                 # Prepare full note details
-                note_result = {
-                    "type": "note",
-                    "key": note.get("key", ""),
-                    "data": data
-                }
+                note_result = {"type": "note", "key": note.get("key", ""), "data": data}
                 note_results.append(note_result)
 
         # Combine and sort results
@@ -1568,7 +1622,7 @@ def search_notes(
                     try:
                         parent = zot.item(parent_key)
                         parent_title = parent["data"].get("title", "Untitled")
-                        parent_info = f" (from \"{parent_title}\")"
+                        parent_info = f' (from "{parent_title}")'
                     except Exception:
                         parent_info = f" (parent key: {parent_key})"
 
@@ -1590,8 +1644,12 @@ def search_notes(
 
                         # Highlight the query in the context
                         highlighted = context.replace(
-                            context[context.lower().find(query_lower):context.lower().find(query_lower)+len(query)],
-                            f"**{context[context.lower().find(query_lower):context.lower().find(query_lower)+len(query)]}**"
+                            context[
+                                context.lower().find(
+                                    query_lower
+                                ) : context.lower().find(query_lower) + len(query)
+                            ],
+                            f"**{context[context.lower().find(query_lower) : context.lower().find(query_lower) + len(query)]}**",
                         )
 
                         note_text = highlighted + "..."
@@ -1623,17 +1681,14 @@ def search_notes(
         return f"Error searching notes: {str(e)}"
 
 
-@mcp.tool(
-    name="zotero_create_note",
-    description="Create a new note for a Zotero item."
-)
+@mcp.tool(name="zotero_create_note", description="Create a new note for a Zotero item.")
 def create_note(
     item_key: str,
     note_title: str,
     note_text: str,
     tags: list[str] | None = None,
     *,
-    ctx: Context
+    ctx: Context,
 ) -> str:
     """
     Create a new note for a Zotero item.
@@ -1678,7 +1733,7 @@ def create_note(
             "itemType": "note",
             "parentItem": item_key,
             "note": html_content,
-            "tags": [{"tag": tag} for tag in (tags or [])]
+            "tags": [{"tag": tag} for tag in (tags or [])],
         }
 
         # Create the note
@@ -1689,7 +1744,7 @@ def create_note(
             successful = result["success"]
             if len(successful) > 0:
                 note_key = next(iter(successful.keys()))
-                return f"Successfully created note for \"{parent_title}\"\n\nNote key: {note_key}"
+                return f'Successfully created note for "{parent_title}"\n\nNote key: {note_key}'
             else:
                 return f"Note creation response was successful but no key was returned: {result}"
         else:
@@ -1700,275 +1755,11 @@ def create_note(
         return f"Error creating note: {str(e)}"
 
 
-@mcp.tool(
-    name="zotero_semantic_search",
-    description="Prioritized search tool. Perform semantic search over your Zotero library using AI-powered embeddings."
-)
-def semantic_search(
-    query: str,
-    limit: int = 10,
-    filters: dict[str, str] | str | None = None,
-    *,
-    ctx: Context
-) -> str:
-    """
-    Perform semantic search over your Zotero library.
-
-    Args:
-        query: Search query text - can be concepts, topics, or natural language descriptions
-        limit: Maximum number of results to return (default: 10)
-        filters: Optional metadata filters as dict or JSON string. Example: {"item_type": "note"}
-        ctx: MCP context
-
-    Returns:
-        Markdown-formatted search results with similarity scores
-    """
-    try:
-        if not query.strip():
-            return "Error: Search query cannot be empty"
-
-        # Parse and validate filters parameter
-        if filters is not None:
-            # Handle JSON string input
-            if isinstance(filters, str):
-                try:
-                    filters = json.loads(filters)
-                    ctx.info(f"Parsed JSON string filters: {filters}")
-                except json.JSONDecodeError as e:
-                    return f"Error: Invalid JSON in filters parameter: {str(e)}"
-
-            # Validate it's a dictionary
-            if not isinstance(filters, dict):
-                return "Error: filters parameter must be a dictionary or JSON string. Example: {\"item_type\": \"note\"}"
-
-            # Automatically translate common field names
-            if "itemType" in filters:
-                filters["item_type"] = filters.pop("itemType")
-                ctx.info(f"Automatically translated 'itemType' to 'item_type': {filters}")
-
-            # Additional field name translations can be added here
-            # Example: if "creatorType" in filters:
-            #     filters["creator_type"] = filters.pop("creatorType")
-
-        ctx.info(f"Performing semantic search for: '{query}'")
-
-        # Import semantic search module
-        from zotero_mcp.semantic_search import create_semantic_search
-        from pathlib import Path
-
-        # Determine config path
-        config_path = Path.home() / ".config" / "zotero-mcp" / "config.json"
-
-        # Create semantic search instance
-        search = create_semantic_search(str(config_path))
-
-        # Perform search
-        results = search.search(query=query, limit=limit, filters=filters)
-
-        if results.get("error"):
-            return f"Semantic search error: {results['error']}"
-
-        search_results = results.get("results", [])
-
-        if not search_results:
-            return f"No semantically similar items found for query: '{query}'"
-
-        # Format results as markdown
-        output = [f"# Semantic Search Results for '{query}'", ""]
-        output.append(f"Found {len(search_results)} similar items:")
-        output.append("")
-
-        for i, result in enumerate(search_results, 1):
-            similarity_score = result.get("similarity_score", 0)
-            _ = result.get("metadata", {})
-            zotero_item = result.get("zotero_item", {})
-
-            if zotero_item:
-                data = zotero_item.get("data", {})
-                title = data.get("title", "Untitled")
-                item_type = data.get("itemType", "unknown")
-                key = result.get("item_key", "")
-
-                # Format creators
-                creators = data.get("creators", [])
-                creators_str = format_creators(creators)
-
-                output.append(f"## {i}. {title}")
-                output.append(f"**Similarity Score:** {similarity_score:.3f}")
-                output.append(f"**Type:** {item_type}")
-                output.append(f"**Item Key:** {key}")
-                output.append(f"**Authors:** {creators_str}")
-
-                # Add date if available
-                if date := data.get("date"):
-                    output.append(f"**Date:** {date}")
-
-                # Add abstract snippet if present
-                if abstract := data.get("abstractNote"):
-                    abstract_snippet = abstract[:200] + "..." if len(abstract) > 200 else abstract
-                    output.append(f"**Abstract:** {abstract_snippet}")
-
-                # Add tags if present
-                if tags := data.get("tags"):
-                    tag_list = [f"`{tag['tag']}`" for tag in tags]
-                    if tag_list:
-                        output.append(f"**Tags:** {' '.join(tag_list)}")
-
-                # Show matched text snippet
-                matched_text = result.get("matched_text", "")
-                if matched_text:
-                    snippet = matched_text[:300] + "..." if len(matched_text) > 300 else matched_text
-                    output.append(f"**Matched Content:** {snippet}")
-
-                output.append("")  # Empty line between items
-            else:
-                # Fallback if full Zotero item not available
-                output.append(f"## {i}. Item {result.get('item_key', 'Unknown')}")
-                output.append(f"**Similarity Score:** {similarity_score:.3f}")
-                if error := result.get("error"):
-                    output.append(f"**Error:** {error}")
-                output.append("")
-
-        return "\n".join(output)
-
-    except Exception as e:
-        ctx.error(f"Error in semantic search: {str(e)}")
-        return f"Error in semantic search: {str(e)}"
-
-
-@mcp.tool(
-    name="zotero_update_search_database",
-    description="Update the semantic search database with latest Zotero items."
-)
-def update_search_database(
-    force_rebuild: bool = False,
-    limit: int | None = None,
-    *,
-    ctx: Context
-) -> str:
-    """
-    Update the semantic search database.
-
-    Args:
-        force_rebuild: Whether to rebuild the entire database from scratch
-        limit: Limit number of items to process (useful for testing)
-        ctx: MCP context
-
-    Returns:
-        Update status and statistics
-    """
-    try:
-        ctx.info("Starting semantic search database update...")
-
-        # Import semantic search module
-        from zotero_mcp.semantic_search import create_semantic_search
-        from pathlib import Path
-
-        # Determine config path
-        config_path = Path.home() / ".config" / "zotero-mcp" / "config.json"
-
-        # Create semantic search instance
-        search = create_semantic_search(str(config_path))
-
-        # Perform update with no fulltext extraction (for speed)
-        stats = search.update_database(
-            force_full_rebuild=force_rebuild,
-            limit=limit,
-            extract_fulltext=False
-        )
-
-        # Format results
-        output = ["# Database Update Results", ""]
-
-        if stats.get("error"):
-            output.append(f"**Error:** {stats['error']}")
-        else:
-            output.append(f"**Total items:** {stats.get('total_items', 0)}")
-            output.append(f"**Processed:** {stats.get('processed_items', 0)}")
-            output.append(f"**Added:** {stats.get('added_items', 0)}")
-            output.append(f"**Updated:** {stats.get('updated_items', 0)}")
-            output.append(f"**Skipped:** {stats.get('skipped_items', 0)}")
-            output.append(f"**Errors:** {stats.get('errors', 0)}")
-            output.append(f"**Duration:** {stats.get('duration', 'Unknown')}")
-
-            if stats.get('start_time'):
-                output.append(f"**Started:** {stats['start_time']}")
-            if stats.get('end_time'):
-                output.append(f"**Completed:** {stats['end_time']}")
-
-        return "\n".join(output)
-
-    except Exception as e:
-        ctx.error(f"Error updating search database: {str(e)}")
-        return f"Error updating search database: {str(e)}"
-
-
-@mcp.tool(
-    name="zotero_get_search_database_status",
-    description="Get status information about the semantic search database."
-)
-def get_search_database_status(*, ctx: Context) -> str:
-    """
-    Get semantic search database status.
-
-    Args:
-        ctx: MCP context
-
-    Returns:
-        Database status information
-    """
-    try:
-        ctx.info("Getting semantic search database status...")
-
-        # Import semantic search module
-        from zotero_mcp.semantic_search import create_semantic_search
-        from pathlib import Path
-
-        # Determine config path
-        config_path = Path.home() / ".config" / "zotero-mcp" / "config.json"
-
-        # Create semantic search instance
-        search = create_semantic_search(str(config_path))
-
-        # Get status
-        status = search.get_database_status()
-
-        # Format results
-        output = ["# Semantic Search Database Status", ""]
-
-        collection_info = status.get("collection_info", {})
-        output.append("## Collection Information")
-        output.append(f"**Name:** {collection_info.get('name', 'Unknown')}")
-        output.append(f"**Document Count:** {collection_info.get('count', 0)}")
-        output.append(f"**Embedding Model:** {collection_info.get('embedding_model', 'Unknown')}")
-        output.append(f"**Database Path:** {collection_info.get('persist_directory', 'Unknown')}")
-
-        if collection_info.get('error'):
-            output.append(f"**Error:** {collection_info['error']}")
-
-        output.append("")
-
-        update_config = status.get("update_config", {})
-        output.append("## Update Configuration")
-        output.append(f"**Auto Update:** {update_config.get('auto_update', False)}")
-        output.append(f"**Frequency:** {update_config.get('update_frequency', 'manual')}")
-        output.append(f"**Last Update:** {update_config.get('last_update', 'Never')}")
-        output.append(f"**Should Update Now:** {status.get('should_update', False)}")
-
-        if update_config.get('update_days'):
-            output.append(f"**Update Interval:** Every {update_config['update_days']} days")
-
-        return "\n".join(output)
-
-    except Exception as e:
-        ctx.error(f"Error getting database status: {str(e)}")
-        return f"Error getting database status: {str(e)}"
-
-
 # --- Minimal wrappers for ChatGPT connectors ---
 # These are required for ChatGPT custom MCP servers via web "connectors"
 # specific tools required are "search" and "fetch"
 # See: https://platform.openai.com/docs/mcp
+
 
 def _extract_item_key_from_input(value: str) -> str | None:
     """Extract a Zotero item key from a Zotero URL, web URL, or bare key.
@@ -1995,59 +1786,12 @@ def _extract_item_key_from_input(value: str) -> str | None:
             return match.group(1)
     return None
 
-@mcp.tool(
-    name="search",
-    description="ChatGPT-compatible search wrapper. Performs semantic search and returns JSON results."
-)
-def chatgpt_connector_search(
-    query: str,
-    *,
-    ctx: Context
-) -> str:
-    """
-    Returns a JSON-encoded string with shape {"results": [{"id","title","url"}, ...]}.
-    The MCP runtime wraps this string as a single text content item.
-    """
-    try:
-        default_limit = 10
-
-        from zotero_mcp.semantic_search import create_semantic_search
-
-        config_path = Path.home() / ".config" / "zotero-mcp" / "config.json"
-        search = create_semantic_search(str(config_path))
-
-        result_list: list[dict[str, str]] = []
-        results = search.search(query=query, limit=default_limit, filters=None) or {}
-        for r in results.get("results", []):
-            item_key = r.get("item_key") or ""
-            title = ""
-            if r.get("zotero_item"):
-                data = (r.get("zotero_item") or {}).get("data", {})
-                title = data.get("title", "")
-            if not title:
-                title = f"Zotero Item {item_key}" if item_key else "Zotero Item"
-            url = f"zotero://select/items/{item_key}" if item_key else ""
-            result_list.append({
-                "id": item_key or uuid.uuid4().hex[:8],
-                "title": title,
-                "url": url,
-            })
-
-        return json.dumps({"results": result_list}, separators=(",", ":"))
-    except Exception as e:
-        ctx.error(f"Error in search wrapper: {str(e)}")
-        return json.dumps({"results": []}, separators=(",", ":"))
-
 
 @mcp.tool(
     name="fetch",
-    description="ChatGPT-compatible fetch wrapper. Retrieves fulltext/metadata for a Zotero item by ID."
+    description="ChatGPT-compatible fetch wrapper. Retrieves fulltext/metadata for a Zotero item by ID.",
 )
-def connector_fetch(
-    id: str,
-    *,
-    ctx: Context
-) -> str:
+def connector_fetch(id: str, *, ctx: Context) -> str:
     """
     Returns a JSON-encoded string with shape {"id","title","text","url","metadata":{...}}.
     The MCP runtime wraps this string as a single text content item.
@@ -2055,13 +1799,16 @@ def connector_fetch(
     try:
         item_key = (id or "").strip()
         if not item_key:
-            return json.dumps({
-                "id": id,
-                "title": "",
-                "text": "",
-                "url": "",
-                "metadata": {"error": "missing item key"}
-            }, separators=(",", ":"))
+            return json.dumps(
+                {
+                    "id": id,
+                    "title": "",
+                    "text": "",
+                    "url": "",
+                    "metadata": {"error": "missing item key"},
+                },
+                separators=(",", ":"),
+            )
 
         # Fetch item metadata for title and context
         zot = get_zotero_client()
@@ -2079,7 +1826,11 @@ def connector_fetch(
         lib_id = os.getenv("ZOTERO_LIBRARY_ID", "")
         if lib_type not in ["user", "group"]:
             lib_type = "user"
-        web_url = f"https://www.zotero.org/{'users' if lib_type=='user' else 'groups'}/{lib_id}/items/{item_key}" if lib_id else ""
+        web_url = (
+            f"https://www.zotero.org/{'users' if lib_type == 'user' else 'groups'}/{lib_id}/items/{item_key}"
+            if lib_id
+            else ""
+        )
         url = web_url or zotero_url
 
         # Use existing tool to get best-effort fulltext/markdown
@@ -2090,15 +1841,18 @@ def connector_fetch(
             marker = "## Full Text"
             pos = text_md.find(marker)
             if pos >= 0:
-                text_clean = text_md[pos + len(marker):].lstrip("\n #")
+                text_clean = text_md[pos + len(marker) :].lstrip("\n #")
         except Exception:
             pass
         if (not text_clean or len(text_clean.strip()) < 40) and data:
             abstract = data.get("abstractNote", "")
             creators = data.get("creators", [])
             byline = format_creators(creators)
-            text_clean = (f"{title}\n\n" + (f"Authors: {byline}\n" if byline else "") +
-                          (f"Abstract:\n{abstract}" if abstract else "")) or text_md
+            text_clean = (
+                f"{title}\n\n"
+                + (f"Authors: {byline}\n" if byline else "")
+                + (f"Abstract:\n{abstract}" if abstract else "")
+            ) or text_md
 
         metadata = {
             "itemType": data.get("itemType", ""),
@@ -2109,22 +1863,28 @@ def connector_fetch(
             "tags": [t.get("tag", "") for t in (data.get("tags", []) or [])],
             "zotero_url": zotero_url,
             "web_url": web_url,
-            "source": "zotero-mcp"
+            "source": "zotero-mcp",
         }
 
-        return json.dumps({
-            "id": item_key,
-            "title": title,
-            "text": text_clean,
-            "url": url,
-            "metadata": metadata
-        }, separators=(",", ":"))
+        return json.dumps(
+            {
+                "id": item_key,
+                "title": title,
+                "text": text_clean,
+                "url": url,
+                "metadata": metadata,
+            },
+            separators=(",", ":"),
+        )
     except Exception as e:
         ctx.error(f"Error in fetch wrapper: {str(e)}")
-        return json.dumps({
-            "id": id,
-            "title": "",
-            "text": "",
-            "url": "",
-            "metadata": {"error": str(e)}
-        }, separators=(",", ":"))
+        return json.dumps(
+            {
+                "id": id,
+                "title": "",
+                "text": "",
+                "url": "",
+                "metadata": {"error": str(e)},
+            },
+            separators=(",", ":"),
+        )
