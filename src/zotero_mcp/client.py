@@ -1,867 +1,533 @@
-"""
-Zotero client wrapper for MCP server.
-"""
+"""Local API operations. Pyzotero owns HTTP, authorization headers and versions."""
 
-import functools
-import logging
-import os
+import copy
+import html
+import mimetypes
 import re
-import shutil
 import threading
-from contextlib import contextmanager
-from dataclasses import dataclass
+from collections.abc import Callable
+from functools import wraps
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-import httpx
-from dotenv import load_dotenv
-from pyzotero import zotero
-
-from zotero_mcp import schema
-from zotero_mcp.extract import (
-    categorize_attachment,
-    extract_file,
-    normalize_attachment_priority,
-    pick_by_priority,
-)
-from zotero_mcp.utils import (
-    _paginate,
-    format_creators,
-    html_to_text,
-    item_display_date,
-    item_display_title,
-)
-from zotero_mcp.webdav import (
-    WebDAVNotConfiguredError,
-    download_attachment_from_webdav,
+from pyzotero import (
+    LocalAPIKeyRequiredError,
+    PreConditionFailedError,
+    ResourceNotFoundError,
+    ServerIDMismatchError,
+    Zotero,
 )
 
-logger = logging.getLogger(__name__)
-
-# Load environment variables
-load_dotenv()
-
-# Serialize all Zotero API access. The local API (port 23119) is single-threaded;
-# concurrent requests from parallel MCP tool threads queue at the network layer and
-# risk hitting pyzotero's 30s timeout. A process-local lock ensures only one
-# request is in-flight at a time — the rest queue in-process (microseconds) instead
-# of at the API (seconds/timeout). RLock allows nested calls from the same thread.
-_zotero_api_lock = threading.RLock()
-
-# Bound how long a tool will WAIT to acquire the lock before giving up. Without a
-# bound, a single slow/stuck op (e.g. a hung cloud write or PDF upload) holds the
-# lock and every other tool — reads included — blocks behind it until FastMCP's
-# ~60s client timeout fires, surfacing as an opaque "-32001 Request timed out" on
-# every queued call. A bounded acquire turns that into a fast, actionable error
-# for the *waiters* while leaving the in-flight op untouched. Keep this safely
-# below the client timeout. Override via ZOTERO_MCP_LOCK_TIMEOUT (seconds; <=0
-# restores the old unbounded behaviour).
-_DEFAULT_LOCK_TIMEOUT = 45.0
+from zotero_mcp.config import Settings, load_auth
 
 
-def _lock_timeout() -> float:
-    raw = os.getenv("ZOTERO_MCP_LOCK_TIMEOUT", "").strip()
-    if not raw:
-        return _DEFAULT_LOCK_TIMEOUT
-    try:
-        return float(raw)
-    except ValueError:
-        return _DEFAULT_LOCK_TIMEOUT
-
-
-class ZoteroApiBusyError(RuntimeError):
-    """Raised when the per-process Zotero API lock can't be acquired in time.
-
-    Signals that another Zotero operation is still in flight (likely slow or
-    stuck) — not that this call itself failed. Callers should surface a clear,
-    retryable message rather than letting the request hang to a timeout.
-    """
-
-
-@contextmanager
-def zotero_api_lock():
-    """Hold the shared Zotero API lock for a block of code.
-
-    The context-manager form of :func:`with_zotero_api_lock`, with identical
-    semantics (bounded acquire, ZoteroApiBusyError for waiters, RLock
-    reentrancy, ZOTERO_MCP_LOCK_TIMEOUT honoured). Use it when only part of a
-    tool touches the Zotero API and the rest is long local work — parsing a
-    downloaded PDF, running a subprocess — that no other tool needs to be
-    blocked behind (#431).
-    """
-    timeout = _lock_timeout()
-    if timeout <= 0:
-        # Opt-out: original unbounded behaviour.
-        with _zotero_api_lock:
-            yield
-        return
-    acquired = _zotero_api_lock.acquire(timeout=timeout)
-    if not acquired:
-        raise ZoteroApiBusyError(
-            f"Another Zotero API operation is still in progress and did not "
-            f"release within {timeout:.0f}s. This usually means a previous "
-            f"call is slow or stuck (e.g. a large PDF upload or an "
-            f"unreachable Zotero cloud). Please retry shortly; if it "
-            f"persists, restart the Zotero MCP server."
-        )
-    try:
-        yield
-    finally:
-        _zotero_api_lock.release()
-
-
-def with_zotero_api_lock(func):
-    """Serialize Zotero API access across concurrent MCP tool threads.
-
-    Acquires the shared RLock with a bounded wait so a stuck op can't wedge
-    every other tool into an opaque client timeout. The lock is reentrant, so
-    nested decorated calls on the same thread (e.g. add_by_url -> add_by_doi)
-    acquire instantly and are never blocked by this bound.
-    """
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        with zotero_api_lock():
-            return func(*args, **kwargs)
-    return wrapper
-
-
-# Runtime library override state — set by zotero_switch_library tool.
-# When non-empty, these values override the corresponding environment variables
-# in get_zotero_client(). Keys: "library_id", "library_type".
-_active_library_override: dict[str, str] = {}
-
-
-def set_active_library(library_id: str, library_type: str) -> None:
-    """Set runtime library override for all subsequent get_zotero_client() calls."""
-    _active_library_override["library_id"] = library_id
-    _active_library_override["library_type"] = library_type
-
-
-def clear_active_library() -> None:
-    """Clear runtime library override, reverting to environment variable defaults."""
-    _active_library_override.clear()
-
-
-def get_active_library() -> dict[str, str]:
-    """Return the current active library override (empty dict if using defaults)."""
-    return dict(_active_library_override)
-
-
-def get_active_group_id() -> int:
-    """group_id (0 = personal, else Zotero groupID) of the library
-    ``get_zotero_client()`` is currently scoped to."""
-
-    override = _active_library_override
-    library_id = override.get("library_id") or os.getenv("ZOTERO_LIBRARY_ID") or "0"
-    library_type = override.get("library_type") or os.getenv("ZOTERO_LIBRARY_TYPE", "user")
-    if library_type == "group":
-        try:
-            return int(library_id)
-        except (TypeError, ValueError):
-            return 0
-    return 0
-
-
-def _make_local_http_client() -> httpx.Client:
-    """Return an httpx.Client pinned to HTTP/1.1 for the local Zotero server.
-
-    Zotero 8's local server (port 23119) only speaks HTTP/1.0. httpx defaults
-    to attempting HTTP/2 negotiation, which the local server rejects with 502
-    Bad Gateway — every tool call fails even though the MCP starts cleanly
-    (#160). Forcing http1=True / http2=False on the transport keeps requests
-    on HTTP/1.1 and the local API answers normally.
-    """
-    return httpx.Client(
-        transport=httpx.HTTPTransport(http1=True, http2=False),
-        follow_redirects=True,
+def new_client(settings: Settings | None = None) -> Zotero:
+    settings = settings or Settings.from_env()
+    auth = load_auth()
+    return Zotero(
+        settings.library_id,
+        settings.library_type,
+        local=True,
+        server_id=auth.server_id if auth else None,
+        local_api_key=auth.key if auth else None,
     )
 
 
-@dataclass
-class AttachmentDetails:
-    """Details about a Zotero attachment."""
-
-    key: str
-    title: str
-    filename: str
-    content_type: str
+def key(value: str) -> str:
+    value = value.upper()
+    if not re.fullmatch(r"[A-Z0-9]{8}", value):
+        raise ValueError("A Zotero item or collection key must contain 8 letters/digits.")
+    return value
 
 
-@dataclass
-class AttachmentDownloadResult:
-    """Result of downloading an attachment from one of the supported sources."""
-
-    path: Path | None
-    source: str | None
-    errors: list[str]
+def version_number(value: int) -> int:
+    if type(value) is not int or value < 0:
+        raise ValueError("version must be a nonnegative local API version.")
+    return value
 
 
-def get_zotero_client() -> zotero.Zotero:
-    """
-    Get authenticated Zotero client using environment variables.
-
-    If a runtime library override is active (via set_active_library()),
-    those values take precedence over environment variables.
-
-    Returns:
-        A configured Zotero client instance.
-
-    Raises:
-        ValueError: If required environment variables are missing.
-    """
-    # Runtime overrides take precedence over environment variables
-    override = _active_library_override
-    library_id = override.get("library_id") or os.getenv("ZOTERO_LIBRARY_ID")
-    library_type = override.get("library_type") or os.getenv("ZOTERO_LIBRARY_TYPE", "user")
-    api_key = os.getenv("ZOTERO_API_KEY")
-    local = os.getenv("ZOTERO_LOCAL", "").lower() in ["true", "yes", "1"]
-
-    # For local API, default to user ID 0 if not specified
-    if local and not library_id:
-        library_id = "0"
-
-    # For remote API, we need both library_id and api_key
-    if not local and not (library_id and api_key):
-        raise ValueError(
-            "Missing required environment variables. Please set ZOTERO_LIBRARY_ID and ZOTERO_API_KEY, "
-            "or use ZOTERO_LOCAL=true for local Zotero instance."
-        )
-
-    return zotero.Zotero(
-        library_id=library_id,
-        library_type=library_type,
-        api_key=api_key,
-        local=local,
-        client=_make_local_http_client() if local else None,
-    )
+def pagination(limit: int, offset: int) -> dict[str, Any]:
+    if type(limit) is not int or not 1 <= limit <= 100:
+        raise ValueError("limit must be between 1 and 100.")
+    if type(offset) is not int or offset < 0:
+        raise ValueError("offset must be a nonnegative integer.")
+    return {"limit": limit, "start": offset}
 
 
-def get_local_zotero_client() -> zotero.Zotero | None:
-    """
-    Get a local Zotero client for file access (WebDAV/local storage).
-
-    This client connects to the local Zotero instance running on port 23119.
-    It's useful for accessing PDF files stored via WebDAV when the main
-    client is configured for web API.
-
-    Returns:
-        A local Zotero client instance, or None if local Zotero is not available.
-    """
-    try:
-        # Create a local client - library_id 0 is the default for local.
-        # HTTP/1.1-only transport for compatibility with Zotero 8's local
-        # server (#160) — httpx default HTTP/2 negotiation returns 502.
-        client = zotero.Zotero(
-            library_id="0",
-            library_type="user",
-            api_key=None,
-            local=True,
-            client=_make_local_http_client(),
-        )
-        # Test connection by making a simple request
-        client.items(limit=1)
-        return client
-    except Exception:
-        return None
-
-
-def get_web_zotero_client() -> zotero.Zotero | None:
-    """
-    Get a web API Zotero client for write operations.
-
-    This client connects to the Zotero web API and can create/modify items.
-    Requires ZOTERO_API_KEY and ZOTERO_LIBRARY_ID environment variables.
-
-    Returns:
-        A web API Zotero client instance, or None if credentials are not available.
-    """
-    library_id = os.getenv("ZOTERO_LIBRARY_ID")
-    library_type = os.getenv("ZOTERO_LIBRARY_TYPE", "user")
-    api_key = os.getenv("ZOTERO_API_KEY")
-
-    if not library_id or not api_key:
-        return None
-
-    return zotero.Zotero(
-        library_id=library_id,
-        library_type=library_type,
-        api_key=api_key,
-        local=False,
-    )
-
-
-def is_local_zotero_available() -> bool:
-    """Check if local Zotero instance is running and accessible."""
-    client = get_local_zotero_client()
-    return client is not None
-
-
-def format_item_metadata(item: dict[str, Any], include_abstract: bool = True) -> str:
-    """
-    Format a Zotero item's metadata as markdown.
-
-    Args:
-        item: A Zotero item dictionary.
-        include_abstract: Whether to include the abstract in the output.
-
-    Returns:
-        Markdown-formatted metadata.
-    """
-    data = item.get("data", {})
-    item_type = data.get("itemType", "unknown")
-
-    # Type-specific base fields (a statute's title is "nameOfAct"), notes
-    # (whose title is their first line) and standalone attachments (which have
-    # only a filename) all resolve here, so a search result and an item lookup
-    # can never disagree about what something is called (#452, #447).
-    heading = item_display_title(data)
-
-    # Basic information
-    lines = [
-        f"# {heading}",
-        f"**Type:** {item_type}",
-        f"**Item Key:** {data.get('key')}",
-    ]
-
-    # Trash status. The Zotero web API returns data.deleted=1 for items in
-    # the Trash; prior versions silently rendered trashed items as if live,
-    # so agents reasoning about "current" state could cite papers the user
-    # had explicitly removed. Surface it near the top where it's hard to miss.
-    if data.get("deleted"):
-        lines.append("**Status:** 🗑️ In Trash (recoverable from Zotero Trash view)")
-
-    # Date. Resolved the same way as the title: a case's date is
-    # `dateDecided`, a statute's `dateEnacted`, a patent's `issueDate` (#452).
-    if date := item_display_date(data):
-        lines.append(f"**Date:** {date}")
-
-    # Authors/Creators
-    if creators := data.get("creators", []):
-        lines.append(f"**Authors:** {format_creators(creators)}")
-
-    # Publication details based on item type
-    if item_type == "journalArticle":
-        if journal := data.get("publicationTitle"):
-            journal_info = f"**Journal:** {journal}"
-            if volume := data.get("volume"):
-                journal_info += f", Volume {volume}"
-            if issue := data.get("issue"):
-                journal_info += f", Issue {issue}"
-            if pages := data.get("pages"):
-                journal_info += f", Pages {pages}"
-            lines.append(journal_info)
-    elif item_type == "bookSection":
-        if book_title := data.get("bookTitle"):
-            lines.append(f"**Book:** {book_title}")
-        if pages := data.get("pages"):
-            lines.append(f"**Pages:** {pages}")
-
-    # Publisher and place — emitted as independent labeled lines for any
-    # item type that has them (book, bookSection, thesis, report, etc.).
-    # Round-trip parity: agents that read these need a stable, labeled form.
-    if publisher := data.get("publisher"):
-        lines.append(f"**Publisher:** {publisher}")
-    if place := data.get("place"):
-        lines.append(f"**Place:** {place}")
-
-    # Identifiers and URL
-    if doi := data.get("DOI"):
-        lines.append(f"**DOI:** {doi}")
-    if isbn := data.get("ISBN"):
-        lines.append(f"**ISBN:** {isbn}")
-    if issn := data.get("ISSN"):
-        lines.append(f"**ISSN:** {issn}")
-    if url := data.get("url"):
-        lines.append(f"**URL:** {url}")
-
-    # Whatever the branches above did not cover. The formatter knows about
-    # journalArticle and bookSection by name and renders nothing type-specific
-    # for anything else, so a case lost `court`, `docketNumber` and `reporter`
-    # entirely — the whole reason its record looked empty (#452). Rather than
-    # adding a branch per type forever, ask the schema what fields this type
-    # has and show the populated ones that are not already above.
-    _shown = {
-        "key", "itemType", "title", "date", "creators", "tags", "collections",
-        "relations", "abstractNote", "extra", "note", "deleted", "version",
-        "dateAdded", "dateModified", "parentItem", "filename", "contentType",
-        "publicationTitle", "bookTitle", "volume", "issue", "pages",
-        "publisher", "place", "DOI", "ISBN", "ISSN", "url", "shortTitle",
-        "accessDate", "libraryCatalog", "callNumber", "archive",
-        "archiveLocation", "rights", "language",
-    }
-    # The type's own spellings of title and date are already in the heading
-    # and the Date line; showing them again under their raw names would read
-    # as two different pieces of information.
-    try:
-        _shown.add(schema.resolve_field(item_type, "title"))
-        _shown.add(schema.resolve_field(item_type, "date"))
-        _type_fields = schema.valid_fields(item_type)
-    except Exception:
-        _type_fields = set()
-
-    _extra_lines = []
-    for field in sorted(_type_fields - _shown):
-        value = data.get(field)
-        if value and isinstance(value, str):
-            # camelCase -> "Docket Number"
-            label = re.sub(r"(?<!^)(?=[A-Z])", " ", field).title()
-            _extra_lines.append(f"**{label}:** {value}")
-    lines.extend(_extra_lines)
-
-    # Extra field often holds citation key / misc metadata
-    if extra := data.get("extra"):
-        lines.extend(["", "## Extra", extra])
-
-        # Try to surface a citation key if present in Extra
-        for line in extra.splitlines():
-            if "citation key" in line.lower():
-                key_part = line.split(":", 1)[1].strip() if ":" in line else line.strip()
-                lines.append(f"**Citation Key (from Extra):** {key_part}")
-                break
-
-    # Tags
-    if tags := data.get("tags"):
-        tag_list = [f"`{tag['tag']}`" for tag in tags]
-        if tag_list:
-            lines.append(f"**Tags:** {' '.join(tag_list)}")
-
-    # Abstract
-    if include_abstract and (abstract := data.get("abstractNote")):
-        lines.extend(["", "## Abstract", abstract])
-
-    # A note's body IS its content -- there is nothing else to show, and
-    # returning the metadata alone told a caller the note existed while
-    # withholding the only thing they asked for (#447).
-    if item_type == "note" and (note_body := data.get("note")):
-        lines.extend(["", "## Note", html_to_text(note_body)])
-
-    # Related Items (dc:relation URIs → item keys)
-    dc_relations = data.get("relations", {}).get("dc:relation", [])
-    if isinstance(dc_relations, str):
-        dc_relations = [dc_relations]
-    if dc_relations:
-        related_keys = [uri.rstrip("/").split("/")[-1] for uri in dc_relations]
-        lines.extend(["", "## Related Items", *[f"- {k}" for k in related_keys]])
-
-    # Collections — list actual keys rather than a bare count. The Zotero
-    # web API does NOT cascade collection-delete to items, so the array
-    # can contain dangling references to collections that no longer exist.
-    # Showing the keys lets agents verify against zotero_search_collections
-    # instead of trusting a potentially stale count.
-    if collections := data.get("collections", []):
-        lines.append(f"**Collections:** {', '.join(collections)}")
-
-    # Notes - this requires additional API calls, so we just indicate if there are notes
-    if "meta" in item and item["meta"].get("numChildren", 0) > 0:
-        lines.append(f"**Notes/Attachments:** {item['meta']['numChildren']}")
-
-    return "\n\n".join(lines)
-
-
-def generate_bibtex(item: dict[str, Any]) -> str:
-    """
-    Generate BibTeX format for a Zotero item.
-
-    Args:
-        item: Zotero item data
-
-    Returns:
-        BibTeX formatted string
-    """
-    data = item.get("data", {})
-    # The key lives at ``data.key`` in Zotero API responses but only at the
-    # top level in some locally-assembled items; accept either.
-    item_key = data.get("key") or item.get("key")
-
-    # A trashed item exports a perfectly plausible entry, and BibTeX has no
-    # field that would say otherwise — markdown shows a trash status and JSON
-    # carries data.deleted, but a BibTeX consumer sees nothing. That gap is
-    # what made a trashed duplicate look like a healthy record to a caller
-    # reading only this format. A comment line is inert to every BibTeX
-    # parser and visible to every human.
-    trash_marker = "% Status: in trash\n" if data.get("deleted") else ""
-
-    # Try Better BibTeX first — it produces better entries and the user's
-    # real pinned citekeys. Any failure falls through to the local generator
-    # below; BBT is an enhancement, never a prerequisite.
-    try:
-        from zotero_mcp.better_bibtex_client import ZoteroBetterBibTexAPI
-
-        if item_key:
-            bibtex = ZoteroBetterBibTexAPI()
-
-            if bibtex.is_zotero_running():
-                exported = bibtex.export_bibtex(item_key)
-                # Guard the result even though export_bibtex now raises on a
-                # blank export: returning "" here is indistinguishable from
-                # "no BibTeX" and from "no such item", which is the whole
-                # defect being fixed.
-                if exported and exported.strip():
-                    return trash_marker + exported
-                logger.warning(
-                    "Better BibTeX returned no entry for %s; "
-                    "falling back to local BibTeX generation", item_key
-                )
-
-    except Exception as e:
-        # BBT does not index trashed items and returns a null citekey for
-        # them, so a perfectly readable item can fail here. Fall back rather
-        # than fail: the local generator below works from the item data we
-        # already hold.
-        logger.warning(
-            "Better BibTeX export failed for %s (%s); "
-            "falling back to local BibTeX generation", item_key, e
-        )
-
-    # Fallback to basic BibTeX generation
-    item_type = data.get("itemType", "misc")
-
-    if item_type in ["attachment", "note"]:
-        raise ValueError(f"Cannot export BibTeX for item type '{item_type}'")
-
-    # Map Zotero item types to BibTeX types
-    type_map = {
-        "journalArticle": "article",
-        "book": "book",
-        "bookSection": "incollection",
-        "conferencePaper": "inproceedings",
-        "thesis": "phdthesis",
-        "report": "techreport",
-        "webpage": "misc",
-        "manuscript": "unpublished"
+def page(items: list, limit: int, offset: int) -> dict[str, Any]:
+    # A full last page can require one final empty request; no unbounded scan.
+    return {
+        "items": items,
+        "offset": offset,
+        "next_offset": offset + len(items) if len(items) == limit else None,
     }
 
-    # Create citation key
-    creators = data.get("creators", [])
-    author = ""
-    if creators:
-        first = creators[0]
-        author = first.get("lastName", first.get("name", "").split()[-1] if first.get("name") else "").replace(" ", "")
 
-    # Resolved, not read straight off `date` — a case keeps its date in
-    # `dateDecided`, a statute in `dateEnacted` (#452). Take the first
-    # four-digit run rather than the leading four characters: these are
-    # display strings ("8 October 2024"), not ISO dates.
-    _display_date = item_display_date(data)
-    _year_match = re.search(r"\b(\d{4})\b", _display_date) if _display_date else None
-    year = _year_match.group(1) if _year_match else "nodate"
-    # ``item_key`` can be absent on items assembled locally; never render the
-    # literal string "None" into a citekey.
-    cite_key = f"{author}{year}_{item_key}" if item_key else f"{author}{year}"
-    if not cite_key:
-        cite_key = "untitled"
-
-    # Build BibTeX entry
-    bib_type = type_map.get(item_type, "misc")
-    lines = [f"@{bib_type}{{{cite_key},"]
-
-    # Add fields. `title` and `date` are resolved through the base-field map
-    # first, so a case or statute exports with its name and year rather than
-    # as an empty `@misc{nodate_KEY}` (#452).
-    resolved = dict(data)
-    if title := item_display_title(data):
-        if title not in ("Untitled", "Untitled Note"):
-            resolved["title"] = title
-
-    # No ("date", "year") entry: the block below already emits `year` from the
-    # resolved four-digit year. Mapping it here as well emitted it twice, the
-    # first time as the raw display string ("8 October 2024"), which is not a
-    # BibTeX year.
-    field_mappings = [
-        ("title", "title"),
-        ("publicationTitle", "journal"),
-        ("bookTitle", "booktitle"),
-        ("volume", "volume"),
-        ("issue", "number"),
-        ("pages", "pages"),
-        ("publisher", "publisher"),
-        ("place", "address"),
-        ("DOI", "doi"),
-        ("ISBN", "isbn"),
-        ("ISSN", "issn"),
-        ("url", "url"),
-        ("abstractNote", "abstract")
-    ]
-
-    for zotero_field, bibtex_field in field_mappings:
-        if value := resolved.get(zotero_field):
-            # Escape special characters
-            value = value.replace("{", "\\{").replace("}", "\\}")
-            lines.append(f'  {bibtex_field} = {{{value}}},')
-
-    # Add authors
-    if creators:
-        authors = []
-        for creator in creators:
-            if creator.get("creatorType") == "author":
-                if "lastName" in creator and "firstName" in creator:
-                    authors.append(f"{creator['lastName']}, {creator['firstName']}")
-                elif "name" in creator:
-                    authors.append(creator["name"])
-        if authors:
-            lines.append(f'  author = {{{" and ".join(authors)}}},')
-
-    # Add year
-    if year != "nodate":
-        lines.append(f'  year = {{{year}}},')
-
-    # Remove trailing comma from last field and close entry
-    if lines[-1].endswith(','):
-        lines[-1] = lines[-1][:-1]
-    lines.append("}")
-
-    return trash_marker + "\n".join(lines)
-
-
-def configured_attachment_priority() -> tuple[str, ...]:
-    """The user's ``attachment_priority``, or the default if unset/unreadable.
-
-    Imported lazily because ``config`` is not a dependency of this module at
-    import time and a missing config must never break attachment lookup.
-    """
-    try:
-        from zotero_mcp.config import load_config
-
-        configured = load_config().semantic_search.extraction.attachment_priority
-    except Exception:
-        return normalize_attachment_priority(None)
-    return normalize_attachment_priority(configured)
-
-
-def get_attachment_details(
-    zot: zotero.Zotero, item: dict[str, Any], priority=None
-) -> AttachmentDetails | None:
-    """
-    Get attachment details for a Zotero item, finding the most relevant attachment.
-
-    Passing a key that names an attachment *directly* returns that attachment
-    unchanged, without consulting ``priority``. That short-circuit is
-    supported and deliberate: it is how a caller reads one specific file on
-    an item that has several (#378).
-
-    Args:
-        zot: A Zotero client instance.
-        item: A Zotero item dictionary.
-        priority: Attachment kinds in preference order. ``None`` uses the
-            configured ``attachment_priority``. Callers that need one
-            specific kind should say so — ``zotero_read_pdf_pages`` passes
-            ``("pdf",)`` so a markdown-first configuration cannot hand it a
-            file it has no way to read.
-
-    Returns:
-        AttachmentDetails if found, None otherwise.
-    """
-    data = item.get("data", {})
-    item_type = data.get("itemType")
-    # Top-level "key" is the reliable one: some API responses (and the local
-    # Zotero server) omit it from the nested data object (#372).
-    item_key = data.get("key") or item.get("key")
-
-    # Direct attachment
-    if item_type == "attachment":
-        return AttachmentDetails(
-            key=item_key,
-            title=data.get("title", "Untitled"),
-            filename=data.get("filename", ""),
-            content_type=data.get("contentType", ""),
+def write_result(result: dict) -> dict[str, Any]:
+    if not isinstance(result, dict) or not {"successful", "success", "failed"} & result.keys():
+        raise RuntimeError(
+            "Zotero returned an unexpected write response; check the library before retrying."
         )
-
-    if priority is None:
-        priority = configured_attachment_priority()
-
-    # For regular items, look for child attachments
-    try:
-        children = _paginate(zot.children, item_key)
-
-        candidates = []
-        for child in children:
-            child_data = child.get("data", {})
-            if child_data.get("itemType") != "attachment":
-                continue
-            content_type = child_data.get("contentType", "")
-            filename = child_data.get("filename", "")
-            title = child_data.get("title", "Untitled")
-            key = child.get("key", "")
-
-            # Unlike the local path, an attachment we cannot parse ourselves
-            # is still worth returning: the caller tries Zotero's
-            # server-side fulltext index first, which covers formats we have
-            # no reader for (EPUB, DOCX). So an uncategorized attachment
-            # joins the catch-all bucket rather than being dropped.
-            category = categorize_attachment(filename or title, content_type) or "other"
-
-            # The API exposes no file size, so this only distinguishes a
-            # stored file (32-char md5) from a linked one (no md5) — enough
-            # to prefer a real upload, not a true size ordering.
-            size_proxy = len(child_data.get("md5") or "")
-
-            candidates.append((
-                category,
-                size_proxy,
-                AttachmentDetails(
-                    key=key,
-                    title=title,
-                    filename=filename,
-                    content_type=content_type,
-                ),
-            ))
-
-        if (chosen := pick_by_priority(candidates, priority)) is not None:
-            return chosen
-    except Exception:
-        pass
-
-    return None
+    if not any(result.get(field) for field in ("successful", "success", "unchanged", "failed")):
+        raise RuntimeError("Zotero returned no item results; check the library before retrying.")
+    return {
+        "ok": not bool(result.get("failed")),
+        "successful": result.get("successful", {}),
+        "success": result.get("success", {}),
+        "unchanged": result.get("unchanged", {}),
+        "failed": result.get("failed", {}),
+    }
 
 
-def download_attachment_file(
-    attachment_key: str,
-    destination_dir: str | Path,
-    filename: str | None = None,
-    *,
-    local_client: zotero.Zotero | None = None,
-    web_client: zotero.Zotero | None = None,
-    enable_webdav: bool = True,
-) -> AttachmentDownloadResult:
-    """
-    Download an attachment using the best available source.
+def operation(*, write: bool = False):
+    """Serialize the shared pyzotero client, including its mutable query state."""
 
-    The fallback order is:
-    1. local Zotero storage, resolved straight off the local SQLite DB
-    2. local Zotero API (works with local storage or desktop-managed WebDAV)
-    3. Direct WebDAV access via environment variables
-    4. Zotero Web API (works with Zotero cloud storage)
+    def decorate(method):
+        @wraps(method)
+        def wrapped(self, *args, **kwargs):
+            with self._lock:
+                zot = self.zot
+                try:
+                    if write and not zot.local_api_key:
+                        raise ValueError(
+                            "Run zotero-mcp authorize and approve Always Allow in Zotero first."
+                        )
+                    return method(self, *args, **kwargs)
+                except LocalAPIKeyRequiredError as exc:
+                    raise ValueError(
+                        "Local permission expired or was revoked. Run zotero-mcp authorize again."
+                    ) from exc
+                except ServerIDMismatchError as exc:
+                    raise ValueError(
+                        "Zotero's database/server ID changed. Check the active profile, then authorize again."
+                    ) from exc
+                except PreConditionFailedError as exc:
+                    raise ValueError(
+                        "The item or collection changed. Read its current local version before retrying."
+                    ) from exc
+                finally:
+                    # pyzotero clears these on success, but some failures leave them set.
+                    zot.url_params = None
+                    zot.tag_data = False
+                    zot.links = None
 
-    Step 1 exists because none of the later steps can serve a *linked* file.
-    The local API answers ``/file`` for a linked attachment with a 302 to a
-    ``file://`` URL, which httpx refuses to follow ("unsupported protocol"),
-    and a linked file is by definition never uploaded to WebDAV or Zotero
-    storage — so all three remaining sources fail on an attachment that is
-    sitting readable on the same disk. Reading the path out of the DB avoids
-    the redirect entirely and is faster for ordinary stored files too.
-    """
-    destination = Path(destination_dir)
-    destination.mkdir(parents=True, exist_ok=True)
-    target_name = Path(filename or f"{attachment_key}.bin").name
-    target_path = destination / target_name
-    errors: list[str] = []
+        return wrapped
 
-    def _cleanup_target() -> None:
-        if target_path.exists() and target_path.stat().st_size == 0:
-            target_path.unlink()
+    return decorate
 
-    def _try_local_storage() -> AttachmentDownloadResult | None:
-        """Resolve the attachment off disk via the local Zotero SQLite DB.
 
-        Gated on local mode so a web-API user pointed at a group library never
-        matches an unrelated same-key row in a personal DB that happens to
-        exist on the machine.
+class Library:
+    def __init__(self, factory: Callable[[], Zotero] = new_client):
+        self._factory = factory
+        self._zot: Zotero | None = None
+        self._lock = threading.RLock()
+
+    @property
+    def zot(self) -> Zotero:
+        if self._zot is None:
+            candidate = self._factory()
+            if not candidate.local:
+                candidate.client.close()
+                raise ValueError("Only the Zotero local API is supported.")
+            self._zot = candidate
+        return self._zot
+
+    def close(self):
+        with self._lock:
+            if self._zot is not None:
+                self._zot.client.close()
+                self._zot = None
+
+    @operation()
+    def search_items(
+        self,
+        query: str = "",
+        tags: list[str] | None = None,
+        item_type: str = "-attachment",
+        qmode: Literal["titleCreatorYear", "everything"] = "titleCreatorYear",
+        limit: int = 25,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Search local metadata, tags or Zotero-indexed text. Use next_offset to page.
+
+        qmode='everything' includes indexed attachment text. Tag filters use Zotero's
+        syntax: separate list entries are AND; 'a || b' is OR; '-tag' excludes a tag.
         """
-        try:
-            from zotero_mcp.config import load_config
-            from zotero_mcp.local_db import LocalZoteroReader
-            from zotero_mcp.utils import is_local_mode
+        if not query.strip() and not tags:
+            raise ValueError("Provide a query or tags; use zotero_get_recent to browse.")
+        params = pagination(limit, offset)
+        params.update(q=query, qmode=qmode, itemType=item_type)
+        if tags:
+            params["tag"] = tags
+        return page(self.zot.items(**params), limit, offset)
 
-            if not is_local_mode():
-                return None
+    @operation()
+    def get_item_metadata(self, item_key: str) -> dict[str, Any]:
+        """Read an item's full metadata and local version, including notes/annotations."""
+        return self.zot.item(key(item_key))
 
-            with LocalZoteroReader(db_path=load_config().resolve_zotero_db_path()) as reader:
-                attachment = reader.get_attachment_by_key(attachment_key)
-                if attachment is None:
-                    return None
+    @operation()
+    def get_item_children(self, item_key: str, limit: int = 25, offset: int = 0) -> dict[str, Any]:
+        """List an item's child attachments, notes or annotations."""
+        return page(self.zot.children(key(item_key), **pagination(limit, offset)), limit, offset)
 
-                resolved = reader._resolve_attachment_path(
-                    attachment_key, attachment["zotero_path"] or ""
-                )
-                if not (resolved and resolved.exists()):
-                    # Recorded filename drifted on disk — scan the folder (#291)
-                    resolved = reader._scan_storage_for_attachment(
-                        attachment_key, attachment["content_type"]
-                    )
-                if not (resolved and resolved.exists() and resolved.stat().st_size > 0):
-                    return None
+    @operation()
+    def get_collections(self, limit: int = 25, offset: int = 0) -> dict[str, Any]:
+        """List collections with keys, parentCollection and local versions."""
+        return page(self.zot.collections(**pagination(limit, offset)), limit, offset)
 
-                # Copy rather than hand back the library path: callers treat
-                # the returned file as a scratch copy and delete it, which on
-                # a linked file would destroy the user's original (#372).
-                shutil.copyfile(resolved, target_path)
-                return AttachmentDownloadResult(
-                    path=target_path,
-                    source="Local storage",
-                    errors=errors,
-                )
-        except Exception as exc:
-            errors.append(f"Local storage: {exc}")
-            _cleanup_target()
+    @operation()
+    def get_collection_items(
+        self, collection_key: str, limit: int = 25, offset: int = 0
+    ) -> dict[str, Any]:
+        """List items directly filed in a collection, with pagination."""
+        return page(
+            self.zot.collection_items(key(collection_key), **pagination(limit, offset)),
+            limit,
+            offset,
+        )
 
-        return None
+    @operation()
+    def get_tags(self, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+        """List tags in the configured local library."""
+        return page(self.zot.tags(**pagination(limit, offset)), limit, offset)
 
-    def _try_dump(label: str, zot_client: zotero.Zotero | None) -> AttachmentDownloadResult | None:
-        if zot_client is None:
-            return None
+    @operation()
+    def get_recent(self, limit: int = 25, offset: int = 0) -> dict[str, Any]:
+        """List top-level items, most recently added first."""
+        return page(
+            self.zot.top(sort="dateAdded", direction="desc", **pagination(limit, offset)),
+            limit,
+            offset,
+        )
 
-        try:
-            zot_client.dump(attachment_key, filename=target_name, path=str(destination))
-            if target_path.exists() and target_path.stat().st_size > 0:
-                return AttachmentDownloadResult(
-                    path=target_path,
-                    source=label,
-                    errors=errors,
-                )
-            errors.append(f"{label}: file was not created")
-        except Exception as exc:
-            errors.append(f"{label}: {exc}")
-        finally:
-            _cleanup_target()
+    @operation()
+    def get_notes(
+        self, parent_key: str | None = None, limit: int = 25, offset: int = 0
+    ) -> dict[str, Any]:
+        """Read notes, optionally restricted to a parent item."""
+        params = {**pagination(limit, offset), "itemType": "note"}
+        items = (
+            self.zot.children(key(parent_key), **params) if parent_key else self.zot.items(**params)
+        )
+        return page(items, limit, offset)
 
-        return None
+    @operation()
+    def get_annotations(
+        self, attachment_key: str, limit: int = 25, offset: int = 0
+    ) -> dict[str, Any]:
+        """Read Zotero reader annotations belonging to an attachment."""
+        items = self.zot.children(
+            key(attachment_key), itemType="annotation", **pagination(limit, offset)
+        )
+        return page(items, limit, offset)
 
-    storage_result = _try_local_storage()
-    if storage_result:
-        return storage_result
+    @operation()
+    def get_item_fulltext(
+        self, item_key: str, offset: int = 0, max_characters: int = 20000
+    ) -> dict[str, Any]:
+        """Read Zotero's indexed text. Accept a paper or attachment key.
 
-    local_result = _try_dump("Local Zotero", local_client)
-    if local_result:
-        return local_result
-
-    if enable_webdav:
-        try:
-            webdav_path = download_attachment_from_webdav(
-                attachment_key,
-                destination,
-                expected_filename=target_name,
+        For a paper, select its first indexed attachment (PDFs first). For other
+        attachments, pass their key directly. Offsets count Unicode characters.
+        No OCR or separate PDF extraction is performed.
+        """
+        pagination(1, offset)
+        if type(max_characters) is not int or not 1 <= max_characters <= 50000:
+            raise ValueError("max_characters must be between 1 and 50000.")
+        item = self.zot.item(key(item_key))
+        if item["data"]["itemType"] == "attachment":
+            attachments = [item]
+        else:
+            attachments = self.zot.everything(
+                self.zot.children(key(item_key), itemType="attachment")
             )
-            if webdav_path.exists() and webdav_path.stat().st_size > 0:
-                return AttachmentDownloadResult(
-                    path=webdav_path,
-                    source="WebDAV",
-                    errors=errors,
+            attachments.sort(key=lambda a: a["data"].get("contentType") != "application/pdf")
+        for attachment in attachments:
+            attachment_key = attachment["key"]
+            try:
+                fulltext = self.zot.fulltext_item(attachment_key)
+            except ResourceNotFoundError:
+                continue
+            content = fulltext.get("content", "")
+            if not content:
+                continue
+            end = min(offset + max_characters, len(content))
+            return {
+                "attachment_key": attachment_key,
+                "content": content[offset:end],
+                "offset": offset,
+                "next_offset": end if end < len(content) else None,
+                "total_characters": len(content),
+                "index": {k: v for k, v in fulltext.items() if k != "content"},
+            }
+        raise ValueError(
+            "No indexed attachment text is available. Index the attachment in Zotero first."
+        )
+
+    @operation()
+    def get_item_schema(self, item_type: str | None = None) -> dict[str, Any]:
+        """List item types, or fields and creator types for one type, from local Zotero."""
+        if item_type is None:
+            return {"item_types": self.zot.item_types()}
+        return {
+            "fields": self.zot.item_type_fields(item_type),
+            "creator_types": self.zot.item_creator_types(item_type),
+        }
+
+    @operation()
+    def export_items(
+        self, item_keys: list[str], format: Literal["bibtex", "ris", "csljson"] = "bibtex"
+    ) -> dict[str, Any]:
+        """Export up to 50 items using Zotero's built-in local translators."""
+        if not 1 <= len(item_keys) <= 50:
+            raise ValueError("Provide 1 to 50 item keys.")
+        result = self.zot.items(itemKey=",".join(key(k) for k in item_keys), format=format)
+        return {
+            "format": format,
+            "content": result if format == "csljson" else self.zot.request.text,
+        }
+
+    @operation(write=True)
+    def add_items(self, items: list[dict[str, Any]]) -> dict[str, Any]:
+        """Create 1 to 50 items, notes or annotations from Zotero item-data objects.
+
+        Use zotero_get_item_schema to check fields. Child notes/annotations need
+        parentItem. Returns each successful and failed batch entry; a batch may
+        partially succeed. Never resubmit successful entries.
+        """
+        if not 1 <= len(items) <= 50:
+            raise ValueError("Provide 1 to 50 items per call.")
+        for item in items:
+            if not isinstance(item.get("itemType"), str) or not item["itemType"]:
+                raise ValueError("Each item must have an itemType.")
+            if {"key", "version", "data"} & item.keys():
+                raise ValueError(
+                    "Pass new item-data objects; use zotero_update_item to change existing items."
                 )
-            errors.append("WebDAV: downloaded file was empty")
-        except WebDAVNotConfiguredError:
-            pass
+        return write_result(self.zot.create_items(copy.deepcopy(items)))
+
+    @operation(write=True)
+    def update_item(self, item_key: str, version: int, changes: dict[str, Any]) -> dict[str, Any]:
+        """Patch item metadata, a note or annotation using its last-read local version.
+
+        Only supplied fields change. Arrays such as tags, creators and collections
+        replace the existing array. A concurrent change fails without a retry.
+        """
+        if not changes or {"key", "version", "data", "library"} & changes.keys():
+            raise ValueError("Provide changed fields only, without key/version/data/library.")
+        payload = {
+            **copy.deepcopy(changes),
+            "key": key(item_key),
+            "version": version_number(version),
+        }
+        if self.zot.update_item(payload) is not True:
+            raise RuntimeError("Zotero did not confirm the update; check the item before retrying.")
+        return {"ok": True, "key": payload["key"]}
+
+    @operation(write=True)
+    def delete_item(self, item_key: str, version: int) -> dict[str, Any]:
+        """Permanently delete an item (including child items), note or annotation.
+
+        This does not move it to Trash. Supply its last-read local version.
+        """
+        payload = {"key": key(item_key), "version": version_number(version)}
+        if self.zot.delete_item(payload) is not True:
+            raise RuntimeError(
+                "Zotero did not confirm deletion; check the library before retrying."
+            )
+        return {"ok": True, "key": payload["key"]}
+
+    @operation(write=True)
+    def create_note(
+        self,
+        parent_key: str,
+        text: str,
+        title: str = "",
+        as_html: bool = False,
+        tags: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Create a child note. Escape plain text by default; as_html preserves Zotero HTML."""
+        content = text if as_html else "<p>" + html.escape(text).replace("\n", "<br/>") + "</p>"
+        if title:
+            content = f"<h1>{html.escape(title)}</h1>{content}"
+        return self.add_items(
+            [
+                {
+                    "itemType": "note",
+                    "parentItem": key(parent_key),
+                    "note": content,
+                    "tags": [{"tag": tag} for tag in (tags or [])],
+                }
+            ]
+        )
+
+    @operation(write=True)
+    def create_collection(self, name: str, parent_collection: str | None = None) -> dict[str, Any]:
+        """Create a collection, optionally under a parent collection."""
+        if not name.strip():
+            raise ValueError("A collection name cannot be empty.")
+        payload = {
+            "name": name,
+            "parentCollection": key(parent_collection) if parent_collection else False,
+        }
+        return write_result(self.zot.create_collections([payload]))
+
+    @operation(write=True)
+    def update_collection(
+        self,
+        collection_key: str,
+        version: int,
+        name: str | None = None,
+        parent_collection: str | None = None,
+    ) -> dict[str, Any]:
+        """Rename/move a collection. Use parent_collection='' to move it to the root."""
+        if name is None and parent_collection is None:
+            raise ValueError("Provide a name or parent_collection to change.")
+        if name is not None and not name.strip():
+            raise ValueError("A collection name cannot be empty.")
+        collection_key = key(collection_key)
+        version_number(version)
+        current = self.zot.collection(collection_key)
+        if current["version"] != version:
+            raise ValueError(
+                "The collection changed. Read its current local version before retrying."
+            )
+        payload = {
+            "key": collection_key,
+            "version": version,
+            "name": current["data"]["name"],
+            "parentCollection": current["data"].get("parentCollection", False),
+        }
+        if name is not None:
+            payload["name"] = name
+        if parent_collection is not None:
+            payload["parentCollection"] = key(parent_collection) if parent_collection else False
+        if self.zot.update_collection(payload) is not True:
+            raise RuntimeError("Zotero did not confirm the collection update.")
+        return {"ok": True, "key": collection_key}
+
+    @operation(write=True)
+    def delete_collection(self, collection_key: str, version: int) -> dict[str, Any]:
+        """Permanently delete a collection. Library items remain; child collections are also removed."""
+        payload = {"key": key(collection_key), "version": version_number(version)}
+        if self.zot.delete_collection(payload) is not True:
+            raise RuntimeError("Zotero did not confirm collection deletion.")
+        return {"ok": True, "key": payload["key"]}
+
+    def _edit_lists(
+        self, item_keys: list[str], field: str, change: Callable[[list], list]
+    ) -> dict[str, Any]:
+        if not 1 <= len(item_keys) <= 50:
+            raise ValueError("Provide 1 to 50 item keys.")
+        keys = list(dict.fromkeys(key(k) for k in item_keys))
+        result = {"ok": True, "updated": [], "unchanged": [], "failed": {}, "pending": []}
+        for index, item_key in enumerate(keys):
+            try:
+                item = self.zot.item(item_key)
+                original = item["data"].get(field, [])
+                updated = change(copy.deepcopy(original))
+                if updated == original:
+                    result["unchanged"].append(item_key)
+                    continue
+                self.update_item(item_key, item["version"], {field: updated})
+                result["updated"].append(item_key)
+            except Exception as exc:
+                # Keep completed work visible; never silently replay a partial batch.
+                result.update(ok=False, failed={item_key: str(exc)}, pending=keys[index + 1 :])
+                break
+        return result
+
+    @operation(write=True)
+    def batch_update_tags(
+        self, item_keys: list[str], add: list[str] | None = None, remove: list[str] | None = None
+    ) -> dict[str, Any]:
+        """Add/remove tags while preserving other tags and tag types.
+
+        Read each item's current local version before writing. On the first error,
+        stop and report updated, failed and pending keys. At most 50 items.
+        """
+        add, remove = add or [], remove or []
+        if not add and not remove:
+            raise ValueError("Provide tags to add or remove.")
+        if any(not tag.strip() for tag in add + remove):
+            raise ValueError("Tags cannot be empty.")
+        if set(add) & set(remove):
+            raise ValueError("A tag cannot be added and removed in the same call.")
+
+        def change(tags):
+            tags = [t for t in tags if t["tag"] not in remove]
+            existing = {t["tag"] for t in tags}
+            for tag in dict.fromkeys(add):
+                if tag not in existing:
+                    tags.append({"tag": tag})
+            return tags
+
+        return self._edit_lists(item_keys, "tags", change)
+
+    @operation(write=True)
+    def manage_collection_items(
+        self, collection_key: str, item_keys: list[str], action: Literal["add", "remove"]
+    ) -> dict[str, Any]:
+        """Add/remove up to 50 items from a collection, preserving other memberships.
+
+        Stop at the first failure and report completed and pending keys.
+        Removing membership does not delete an item.
+        """
+        collection_key = key(collection_key)
+        if action not in {"add", "remove"}:
+            raise ValueError("action must be add or remove.")
+        if action == "add":
+            self.zot.collection(collection_key)
+
+        def change(collections):
+            if action == "add" and collection_key not in collections:
+                return [*collections, collection_key]
+            if action == "remove":
+                return [c for c in collections if c != collection_key]
+            return collections
+
+        return self._edit_lists(item_keys, "collections", change)
+
+    @operation(write=True)
+    def attach_file(
+        self, parent_key: str, file_path: str, title: str | None = None
+    ) -> dict[str, Any]:
+        """Copy an existing absolute-path file into Zotero's local attachment storage.
+
+        No URL download. If upload fails after creation, returns the attachment key
+        so you can inspect it; do not resubmit blindly and create a duplicate.
+        """
+        parent_key = key(parent_key)
+        path = Path(file_path)
+        if not path.is_absolute() or not path.is_file():
+            raise ValueError("file_path must be an absolute path to an existing file.")
+        metadata = {
+            "itemType": "attachment",
+            "parentItem": parent_key,
+            "linkMode": "imported_file",
+            "title": title or path.name,
+            "filename": path.name,
+            "contentType": mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+        }
+        created = write_result(self.zot.create_items([metadata]))
+        if not created["ok"]:
+            return created
+        attachment_key = created["success"].get("0")
+        if not attachment_key:
+            attachment_key = created["successful"].get("0", {}).get("key")
+        if not attachment_key:
+            raise RuntimeError(
+                "Zotero created an attachment without returning its key; check the library."
+            )
+        try:
+            result = self.zot.upload_attachments(
+                [{**metadata, "key": attachment_key}], basedir=str(path.parent)
+            )
+            return {"ok": not bool(result["failure"]), "attachment_key": attachment_key, **result}
         except Exception as exc:
-            errors.append(f"WebDAV: {exc}")
-
-    web_result = _try_dump("Web API", web_client)
-    if web_result:
-        return web_result
-
-    return AttachmentDownloadResult(path=None, source=None, errors=errors)
-
-
-def convert_to_markdown(file_path: str | Path, *, max_pages: int | None = None) -> str:
-    """
-    Convert a downloaded attachment to markdown.
-
-    Args:
-        file_path: Path to the file to convert.
-        max_pages: For PDFs, extract only the first N pages.
-
-    Returns:
-        Markdown text, or a human-readable error string on failure.
-    """
-    doc = extract_file(file_path, max_pages=max_pages)
-    if doc is None:
-        return f"Error converting file to markdown: {Path(file_path).name}"
-    return doc.text
+            return {
+                "ok": False,
+                "attachment_key": attachment_key,
+                "error": f"Attachment created but upload failed: {exc}. Inspect it before retrying.",
+            }

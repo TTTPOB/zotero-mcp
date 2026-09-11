@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "zotero": {
+      "command": "C:\\Tools\\playground\\zotmcp\\zotero-mcp\\.venv\\Scripts\\zotero-mcp.exe",
+      "args": ["serve"]
+    }
+  }
+}

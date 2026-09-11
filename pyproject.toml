@@ -4,112 +4,39 @@ build-backend = "hatchling.build"
 
 [project]
 name = "zotero-mcp-server"
-dynamic = ["version"]
-authors = [
-  { name = "54yyyu", email = "54yyyu@github.com" },
-]
-description = "A Model Context Protocol server for Zotero"
-keywords = ["zotero", "mcp", "model-context-protocol", "cli", "research", "citations", "bibliography"]
-license = {text = "MIT"}
+version = "0.11.0+local.1"
+description = "A small MCP server for the Zotero 10 local API"
 readme = "README.md"
-requires-python = ">=3.10"
-classifiers = [
-    "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
-]
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "54yyyu" }]
 dependencies = [
-    # 1.13.5 retries a rate-limited read internally and raises
-    # TooManyRetriesError once the backoff is exhausted (upstream
-    # urschrei/pyzotero#352). Below it, every read method hands the HTTP 429
-    # error body back as bytes, which callers read as data — dedup searches
-    # most damagingly, where it looks like "no match" and duplicates the item.
-    # _helpers.find_existing_items relies on that exception, so this floor is
-    # load-bearing, not just preferred. (1.13.3 is also required, for sending
-    # Path(filename).name as the stored-file filename — upstream #341, without
-    # which every attach pays for the two-step fallback in _attach_and_verify.)
-    "pyzotero>=1.13.5",
-    "python-dotenv>=1.0.0",
-    # PDF text extraction. Rust with prebuilt abi3 wheels for every platform
-    # we support and no Python dependencies of its own. Pinned exactly while
-    # it is pre-1.0 — the extraction output is user-visible.
-    "pdf-inspector==0.2.6",
-    # HTML snapshots only.
-    "markdownify>=1.2",
-    "pydantic>=2.0.0",
-    "requests>=2.28.0",
-    # <4 until the FastMCP 4 migration: FastMCP 4 targets the stateless
-    # 2026-07-28 MCP revision, drops ctx.sample/list_roots/elicit, and swaps
-    # httpx for httpx2. It is still a beta (4.0.0b1) as of this pin.
-    "fastmcp>=2.14.0,<4",
-    # client.py imports httpx directly rather than relying on it arriving
-    # transitively through fastmcp (which replaces it with httpx2 in v4).
-    "httpx>=0.27",
-    "unidecode>=1.3.0",
-    "bibtexparser>=1.4,<2",
+    "pyzotero>=1.15.1,<2",
+    "mcp>=1.30,<2",
 ]
 
-[project.optional-dependencies]
-semantic = [
-    # >=1.0.0 for chromadb.utils.embedding_functions.register_embedding_function,
-    # used to register the custom OpenAI/Gemini/HF embedding functions (#315).
-    "chromadb>=1.0.0",
-    "sentence-transformers>=2.2.0",
-    "openai>=1.30.0",
-    "google-genai>=0.7.0",
-    "tiktoken>=0.7.0",
-]
-pdf = [
-    # >=1.24.2 for Page.cluster_drawings (vector figure detection in zotero_get_page_layout)
-    "pymupdf>=1.24.2",
-    "ebooklib>=0.18",
-]
-scite = [
-    "requests>=2.28.0",
-]
-all = [
-    "zotero-mcp-server[semantic,pdf,scite]",
-]
-dev = [
-    "zotero-mcp-server[all]",
-    "pytest>=7.0.0",
-    "pytest-asyncio>=0.21",
-    "pytest-timeout>=2.0.0",
-    "pytest-httpserver>=1.0",
-    "ruff>=0.9.0",
-]
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=1", "ruff>=0.12", "httpx2>=2.12,<3"]
 
 [project.urls]
-"Homepage" = "https://github.com/54yyyu/zotero-mcp"
-"Bug Tracker" = "https://github.com/54yyyu/zotero-mcp/issues"
-"Documentation" = "https://stevenyuyy.com/zotero-mcp/"
-"Changelog" = "https://github.com/54yyyu/zotero-mcp/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/TTTPOB/zotero-mcp"
+Upstream = "https://github.com/54yyyu/zotero-mcp"
 
 [project.scripts]
-zotero-cli = "zotero_mcp.cli_standalone:main"
 zotero-mcp = "zotero_mcp.cli:main"
-# Alias matching the PyPI distribution name, so `uvx zotero-mcp-server serve` works
-# without --from. MCP Registry clients derive the command from the package identifier.
-zotero-mcp-server = "zotero_mcp.cli:main"
-
-
-[tool.hatch.version]
-path = "src/zotero_mcp/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/zotero_mcp"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+
 [tool.ruff]
-target-version = "py310"
-line-length = 120
+target-version = "py311"
+line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP"]
+select = ["E", "F", "I", "UP", "B"]
 ignore = ["E501"]
-
-[tool.pytest.ini_options]
-timeout = 30
-testpaths = ["tests"]
-filterwarnings = [
-    "ignore::DeprecationWarning",
-]

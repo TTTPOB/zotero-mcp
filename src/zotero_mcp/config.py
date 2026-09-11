@@ -1,145 +1,78 @@
-"""Typed configuration for zotero-mcp.
-
-The server configuration lives at ``~/.config/zotero-mcp/config.json``.
-This module defines stdlib dataclasses for every section and a single
-loader that deserializes the JSON file into a typed ``ZoteroMcpConfig``
-instance (using pydantic's ``TypeAdapter`` for validation / defaults).
-"""
-
-from __future__ import annotations
+"""Local library selection and local API authorization storage."""
 
 import json
-import logging
+import os
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
-
-from pydantic import TypeAdapter, ValidationError
-
-ZOTERO_MCP_CONFIG_PATH = Path.home() / ".config" / "zotero-mcp" / "config.json"
-
-logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Semantic-search sub-sections
-# ---------------------------------------------------------------------------
+def auth_path() -> Path:
+    """Use the user's application data directory, never the working directory."""
+    if os.name == "nt":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    else:
+        base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    return base / "zotero-mcp" / "local-auth.json"
 
 
-@dataclass
-class ExtractionConfig:
-    pdf_max_pages: int | None = None
-    fulltext_display_max_pages: int | None = None
-    # Order in which attachment kinds are considered when an item has more
-    # than one readable file. None means the default (PDF > HTML > rest);
-    # see zotero_mcp.extract.normalize_attachment_priority (#378).
-    attachment_priority: list[str] | None = None
+@dataclass(frozen=True)
+class LocalAuth:
+    server_id: str
+    key: str = field(repr=False)
+
+    def __post_init__(self):
+        if not isinstance(self.server_id, str) or not self.server_id.strip():
+            raise ValueError("Local authorization requires a Zotero server ID.")
+        if not isinstance(self.key, str) or not self.key.strip():
+            raise ValueError("Local authorization requires a local API key.")
 
 
-@dataclass
-class UpdateConfig:
-    auto_update: bool = False
-    update_frequency: str = "manual"
-    update_days: int | None = None
-    last_update: str | None = None
+@dataclass(frozen=True)
+class Settings:
+    library_id: str = "0"
+    library_type: str = "user"
+
+    def __post_init__(self):
+        if self.library_type not in {"user", "group"}:
+            raise ValueError("ZOTERO_LIBRARY_TYPE must be user or group.")
+        if not self.library_id.isascii() or not self.library_id.isdigit():
+            raise ValueError("ZOTERO_LIBRARY_ID must contain digits only.")
+        if self.library_type == "group" and int(self.library_id) == 0:
+            raise ValueError("A group library requires its nonzero Zotero group ID.")
+
+    @classmethod
+    def from_env(cls):
+        # Legacy cloud credentials are intentionally never read.
+        return cls(
+            library_id=os.environ.get("ZOTERO_LIBRARY_ID", "0"),
+            library_type=os.environ.get("ZOTERO_LIBRARY_TYPE", "user"),
+        )
 
 
-@dataclass
-class OpenAIBatchConfig:
-    enabled: bool = False
-
-
-@dataclass
-class RerankerConfig:
-    enabled: bool = False
-    model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    candidate_multiplier: int = 3
-
-
-@dataclass
-class ChunkingConfig:
-    enabled: bool = False
-    chunk_size: int = 1500
-    overlap: int = 200
-    max_chunks_per_item: int = 20
-
-
-@dataclass
-class SemanticSearchConfig:
-    embedding_model: str = "default"
-    embedding_config: dict[str, Any] = field(default_factory=dict)
-    openai_batch: OpenAIBatchConfig = field(default_factory=OpenAIBatchConfig)
-    update_config: UpdateConfig = field(default_factory=UpdateConfig)
-    zotero_db_path: str | None = None
-    extraction: ExtractionConfig = field(default_factory=ExtractionConfig)
-    include_fulltext: bool = True
-    reranker: RerankerConfig = field(default_factory=RerankerConfig)
-    chunking: ChunkingConfig = field(default_factory=ChunkingConfig)
-    # Per-library incremental-sync watermarks, keyed by group_id as a string
-    # ("0" = personal library). Every Zotero library has its own independent
-    # version counter, so one shared scalar corrupted sync state whenever the
-    # active library changed (#393).
-    last_sync_versions: dict[str, int] = field(default_factory=dict)
-    # Legacy pre-#393 scalar. Kept for backward compatibility: it is migrated
-    # on read and mirrored on write for the personal library only.
-    last_sync_version: int = 0
-
-
-# ---------------------------------------------------------------------------
-# Top-level config
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class ZoteroMcpConfig:
-    zotero_db_path: str | None = None
-    client_env: dict[str, str] = field(default_factory=dict)
-    semantic_search: SemanticSearchConfig = field(
-        default_factory=SemanticSearchConfig,
-    )
-
-    def resolve_zotero_db_path(self) -> str | None:
-        """Return the Zotero database path with correct precedence.
-
-        Checks top-level ``zotero_db_path`` first, then falls back to
-        ``semantic_search.zotero_db_path`` for backward compatibility.
-        Returns ``None`` when neither is set, letting
-        ``LocalZoteroReader._find_zotero_db()`` auto-detect.
-        """
-        return self.zotero_db_path or self.semantic_search.zotero_db_path
-
-
-_config_adapter: TypeAdapter[ZoteroMcpConfig] = TypeAdapter(ZoteroMcpConfig)
-
-
-def _strip_nulls(obj: Any) -> Any:
-    """Recursively remove keys with ``None`` values from nested dicts.
-
-    Allows ``"extraction": null`` in config without causing a validation
-    error — the key is treated as absent and the dataclass default fills in.
-    """
-    if isinstance(obj, dict):
-        return {k: _strip_nulls(v) for k, v in obj.items() if v is not None}
-    return obj
-
-
-def load_config() -> ZoteroMcpConfig:
-    """Load and validate ``~/.config/zotero-mcp/config.json``.
-
-    Return a ``ZoteroMcpConfig`` with defaults filled in for any
-    missing keys. A missing file, parse error, or validation error
-    yields the default (all-empty) config so callers never need to
-    guard against ``None``.
-    """
-    raw: dict[str, Any] = {}
-    if ZOTERO_MCP_CONFIG_PATH.exists():
-        try:
-            with open(ZOTERO_MCP_CONFIG_PATH, encoding="utf-8") as f:
-                raw = json.load(f) or {}
-        except (json.JSONDecodeError, OSError):
-            pass
+def load_auth(path: Path | None = None) -> LocalAuth | None:
+    path = path if path is not None else auth_path()
+    if not path.exists():
+        return None
     try:
-        return _config_adapter.validate_python(_strip_nulls(raw))
-    except ValidationError:
-        logger.warning("Invalid zotero-mcp config, falling back to defaults")
-        return ZoteroMcpConfig()
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return LocalAuth(server_id=data["server_id"], key=data["key"])
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ValueError(
+            f"Cannot read local authorization at {path}; run zotero-mcp authorize."
+        ) from exc
+
+
+def save_auth(auth: LocalAuth, path: Path | None = None) -> None:
+    path = path if path is not None else auth_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # mkstemp is user-only on POSIX; Windows inherits the user profile's ACL.
+    fd, temporary = tempfile.mkstemp(prefix=".local-auth-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump({"server_id": auth.server_id, "key": auth.key}, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)

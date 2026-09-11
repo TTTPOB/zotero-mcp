@@ -42,8 +42,9 @@ Thumbs.db
 .env
 .env.local
 
-# Lock files
-uv.lock
+# Local checks and credentials
+.ruff_cache/
+local-auth.json
 
 # Local project docs
 CLAUDE.md
