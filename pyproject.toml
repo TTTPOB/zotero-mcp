@@ -16,7 +16,17 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=1", "ruff>=0.12", "httpx2>=2.12,<3"]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=1",
+    "ruff>=0.12",
+    # The one HTTP client this project uses directly, and the one pyzotero
+    # itself moved to. The MCP SDK still depends on httpx and installs it
+    # regardless, but no first-party module imports it: mixing the two stacks
+    # is how a request ends up serialized by one library and parsed by the
+    # other's response types.
+    "httpx2>=2.12,<3",
+]
 
 [project.urls]
 Homepage = "https://github.com/TTTPOB/zotero-mcp"

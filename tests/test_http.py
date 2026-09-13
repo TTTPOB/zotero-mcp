@@ -3,7 +3,7 @@
 from datetime import timedelta
 from unittest.mock import Mock, call
 
-import httpx
+import httpx2 as http
 import pytest
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
@@ -99,10 +99,10 @@ def test_out_of_range_http_port_is_rejected_before_binding(fake_server, capsys):
 async def test_http_session_serves_tools_without_authentication(library, zot):
     server = build_server(library)
     app = server.streamable_http_app()
-    transport = httpx.ASGITransport(app=app)
+    transport = http.ASGITransport(app=app)
 
     async with app.router.lifespan_context(app):
-        async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as client:
+        async with http.AsyncClient(transport=transport, base_url=BASE_URL) as client:
             async with streamable_http_client(f"{BASE_URL}/mcp", http_client=client) as (
                 read,
                 write,
