@@ -2,7 +2,7 @@
 
 供个人使用，连接正在运行的 **Zotero 10+**。基于 [54yyyu/zotero-mcp](https://github.com/54yyyu/zotero-mcp) 精简，保留 MIT 许可证与上游 Git 历史。
 
-运行依赖只有 **pyzotero + 官方 MCP SDK**。使用 stdio，通过 `http://localhost:23119/api` 读写。
+运行依赖只有 **pyzotero + 官方 MCP SDK**。默认使用 stdio，也可以改用 Streamable HTTP；两种方式都通过 `http://localhost:23119/api` 读写。
 
 ## 保留了什么
 
@@ -49,6 +49,20 @@ uv sync --locked --no-dev
 使用 `mcpServers` 格式的客户端可参考 [Windows 配置示例](docs/mcp-windows.json)。其他客户端填入同一命令与参数即可。保存后重启客户端。
 
 先让助手执行：**“列出 Zotero 最近添加的 5 篇文献。”**
+
+## 改用 HTTP 连接（可选）
+
+需要多个客户端共用一个进程，或者客户端不方便启动进程时，用 Streamable HTTP：
+
+```powershell
+.\.venv\Scripts\zotero-mcp.exe serve --transport http
+```
+
+默认监听 `http://127.0.0.1:8000/mcp`，客户端填这个地址即可。用 `--host`、`--port` 改绑定地址和端口，也可以用环境变量 `ZOTERO_MCP_HTTP_HOST`、`ZOTERO_MCP_HTTP_PORT`；命令行参数优先。
+
+这个接口**不做认证**，所以默认只绑定本机回环地址。改成 `--host 0.0.0.0` 或局域网地址后，同一网络里任何人都能读写你的 Zotero 库，请先确认网络环境可信。
+
+写入权限仍由 `authorize` 决定，HTTP 只是换一种连接方式。不带 `--transport` 的 `serve` 与以前完全一致。
 
 ## 几个需要记住的点
 

@@ -1,4 +1,4 @@
-"""Start the local MCP server or request persistent local write permission."""
+"""Serve the local MCP tools over stdio or Streamable HTTP, or request write permission."""
 
 import argparse
 import sys
@@ -29,18 +29,53 @@ def authorize() -> None:
         zot.client.close()
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Zotero 10 local MCP server")
+def serve(transport: str, host: str | None, port: int | None) -> None:
+    from zotero_mcp.config import HttpSettings
+    from zotero_mcp.server import build_server
+
+    if transport != "http":
+        if host is not None or port is not None:
+            raise ValueError("--host and --port apply to --transport http only.")
+        build_server().run(transport="stdio")
+        return
+    settings = HttpSettings.from_env(host=host, port=port)
+    server = build_server(host=settings.host, port=settings.port)
+    # No authentication: keep the default loopback binding unless the user overrides it.
+    print(
+        f"Zotero MCP: Streamable HTTP on http://{settings.host}:{settings.port}"
+        f"{server.settings.streamable_http_path} without authentication",
+        file=sys.stderr,
+    )
+    server.run(transport="streamable-http")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="zotero-mcp", description="Zotero 10 local MCP server")
     parser.add_argument("--version", action="version", version=__version__)
-    parser.add_argument("command", nargs="?", default="serve", choices=["serve", "authorize"])
-    args = parser.parse_args(argv)
+    parser.set_defaults(transport="stdio", host=None, port=None)
+    commands = parser.add_subparsers(dest="command")
+    serve_command = commands.add_parser("serve", help="Run the MCP server (stdio by default).")
+    serve_command.add_argument(
+        "--transport",
+        choices=["stdio", "http"],
+        default="stdio",
+        help="stdio for clients that launch a process; http for Streamable HTTP.",
+    )
+    serve_command.add_argument(
+        "--host", default=None, help="HTTP bind address (default 127.0.0.1)."
+    )
+    serve_command.add_argument("--port", type=int, default=None, help="HTTP port (default 8000).")
+    commands.add_parser("authorize", help="Request persistent local write permission.")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
     try:
         if args.command == "authorize":
             authorize()
         else:
-            from zotero_mcp.server import build_server
-
-            build_server().run(transport="stdio")
+            serve(args.transport, args.host, args.port)
         return 0
     except Exception as exc:
         print(f"Zotero MCP: {exc}", file=sys.stderr)

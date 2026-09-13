@@ -50,6 +50,33 @@ class Settings:
         )
 
 
+@dataclass(frozen=True)
+class HttpSettings:
+    """Streamable HTTP transport. The endpoint is unauthenticated, so it binds locally."""
+
+    host: str = "127.0.0.1"
+    port: int = 8000
+
+    def __post_init__(self):
+        if not isinstance(self.host, str) or not self.host.strip():
+            raise ValueError("The HTTP host must be a hostname or address.")
+        if type(self.port) is not int or not 1 <= self.port <= 65535:
+            raise ValueError("The HTTP port must be between 1 and 65535.")
+
+    @classmethod
+    def from_env(cls, host: str | None = None, port: int | None = None):
+        """Command-line values win; otherwise read ZOTERO_MCP_HTTP_HOST and _PORT."""
+        if host is None:
+            host = os.environ.get("ZOTERO_MCP_HTTP_HOST", "127.0.0.1")
+        if port is None:
+            raw = os.environ.get("ZOTERO_MCP_HTTP_PORT", "8000")
+            try:
+                port = int(raw)
+            except ValueError as exc:
+                raise ValueError("ZOTERO_MCP_HTTP_PORT must be a number.") from exc
+        return cls(host=host, port=port)
+
+
 def load_auth(path: Path | None = None) -> LocalAuth | None:
     path = path if path is not None else auth_path()
     if not path.exists():

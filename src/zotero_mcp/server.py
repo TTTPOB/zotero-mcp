@@ -35,7 +35,9 @@ WRITE_TOOLS = (
 )
 
 
-def build_server(library: Library | None = None) -> FastMCP:
+def build_server(
+    library: Library | None = None, *, host: str = "127.0.0.1", port: int = 8000
+) -> FastMCP:
     library = library or Library()
 
     @asynccontextmanager
@@ -54,6 +56,8 @@ def build_server(library: Library | None = None) -> FastMCP:
             "authorization via zotero-mcp authorize. Fulltext comes from Zotero's own index."
         ),
         lifespan=lifespan,
+        host=host,
+        port=port,
     )
     for name in READ_TOOLS + WRITE_TOOLS:
         readonly = name in READ_TOOLS
