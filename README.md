@@ -60,6 +60,8 @@ uv sync --locked --no-dev
 
 默认监听 `http://127.0.0.1:8000/mcp`，客户端填这个地址即可。用 `--host`、`--port` 改绑定地址和端口，也可以用环境变量 `ZOTERO_MCP_HTTP_HOST`、`ZOTERO_MCP_HTTP_PORT`；命令行参数优先。
 
+HTTP 使用 SDK 的无状态 Streamable HTTP：每个请求独立处理，不保存 MCP session，也不支持事件流恢复或依赖 session 的服务端状态。initialize 不返回 session header；服务重启后，客户端即使继续发送旧的 `mcp-session-id` 也不会收到 session 失效错误，但仍应按 MCP 客户端流程重新 initialize。共享的 Zotero Library 会在 HTTP 应用退出时统一关闭，而不是在每个请求后关闭。
+
 这个接口**不做认证**，所以默认只绑定本机回环地址。改成 `--host 0.0.0.0` 或局域网地址后，同一网络里任何人都能读写你的 Zotero 库，请先确认网络环境可信。
 
 写入权限仍由 `authorize` 决定，HTTP 只是换一种连接方式。不带 `--transport` 的 `serve` 与以前完全一致。
