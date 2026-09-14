@@ -15,6 +15,7 @@ from pyzotero import (
     ParamNotPassedError,
     PreConditionFailedError,
     PreConditionRequiredError,
+    PyZoteroError,
     RequestEntityTooLargeError,
     ResourceNotFoundError,
     ServerIDMismatchError,
@@ -81,11 +82,9 @@ class LibraryError(ValueError, RuntimeError):
 
 def no_index_error(message: str = "No indexed attachment text is available.") -> LibraryError:
     """Build the actionable error returned when Zotero has no readable index."""
-    return LibraryError(
-        NO_INDEX,
-        f"{message} Index the attachment in Zotero first.",
-        retryable=False,
-    )
+    if "index the attachment" not in message.lower():
+        message = f"{message} Index the attachment in Zotero first."
+    return LibraryError(NO_INDEX, message, retryable=False)
 
 
 def _unwrap(exc: BaseException) -> BaseException:
@@ -122,17 +121,26 @@ def from_exception(
     operation: str | None = None,
 ) -> LibraryError:
     """Map pyzotero, transport and validation failures to contract errors."""
-    original = _unwrap(exc)
+    # Keep pyzotero's typed error at the top of its own cause chain. Its cause
+    # is often an httpx status exception that would otherwise look like a drop.
+    if isinstance(exc, LibraryError):
+        return exc
+    original = exc if isinstance(exc, PyZoteroError) else _unwrap(exc)
     if isinstance(original, LibraryError):
         return original
 
+    if isinstance(original, ServerIDRequiredError):
+        return LibraryError(
+            UNSUPPORTED_VERSION,
+            "The local Zotero API did not provide its server ID; use a supported Zotero version.",
+            retryable=False,
+        )
     if isinstance(
         original,
         (
             LocalAPIKeyRequiredError,
             LocalAPIDeniedError,
             UserNotAuthorisedError,
-            ServerIDRequiredError,
             PreConditionRequiredError,
         ),
     ):

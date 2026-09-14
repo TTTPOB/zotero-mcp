@@ -225,6 +225,20 @@ def write_result(
     unchanged = result.get("unchanged") or {}
     failed = result.get("failed") or {}
     pending = result.get("pending") or []
+    if (
+        not isinstance(successful, dict)
+        or not isinstance(success, dict)
+        or not isinstance(failed, dict)
+    ):
+        raise LibraryError(
+            "UNKNOWN_WRITE_RESULT",
+            "Zotero returned malformed indexed write results; inspect the library before retrying.",
+        )
+    if not isinstance(unchanged, (dict, list)) or not isinstance(pending, (dict, list)):
+        raise LibraryError(
+            "UNKNOWN_WRITE_RESULT",
+            "Zotero returned malformed write results; inspect the library before retrying.",
+        )
     if not any((successful, success, unchanged, failed, pending)):
         raise LibraryError(
             "UNKNOWN_WRITE_RESULT",
@@ -235,18 +249,39 @@ def write_result(
         input_count = len(input_keys)
     indexes: set[int] = set()
     for values in (successful, success, failed):
-        if isinstance(values, dict):
-            indexes.update(int(index) for index in values if str(index).isdigit())
+        for raw_index in values:
+            if not str(raw_index).isdigit():
+                raise LibraryError(
+                    "UNKNOWN_WRITE_RESULT",
+                    "Zotero returned a non-indexed write result; inspect the library before retrying.",
+                )
+            indexes.add(int(raw_index))
     if isinstance(unchanged, dict):
-        indexes.update(int(index) for index in unchanged if str(index).isdigit())
+        for raw_index in unchanged:
+            if not str(raw_index).isdigit():
+                raise LibraryError(
+                    "UNKNOWN_WRITE_RESULT",
+                    "Zotero returned a non-indexed write result; inspect the library before retrying.",
+                )
+            indexes.add(int(raw_index))
     elif isinstance(unchanged, list):
         indexes.update(range(len(unchanged)))
     if isinstance(pending, dict):
-        indexes.update(int(index) for index in pending if str(index).isdigit())
+        for raw_index in pending:
+            if not str(raw_index).isdigit():
+                raise LibraryError(
+                    "UNKNOWN_WRITE_RESULT",
+                    "Zotero returned a non-indexed pending result; inspect the library before retrying.",
+                )
+            indexes.add(int(raw_index))
     elif isinstance(pending, list):
-        indexes.update(
-            int(index) for index in pending if isinstance(index, int) or str(index).isdigit()
-        )
+        for raw_index in pending:
+            if isinstance(raw_index, bool) or not str(raw_index).isdigit():
+                raise LibraryError(
+                    "UNKNOWN_WRITE_RESULT",
+                    "Zotero returned a non-indexed pending result; inspect the library before retrying.",
+                )
+            indexes.add(int(raw_index))
     if input_count is not None:
         indexes.update(range(input_count))
 
@@ -343,7 +378,9 @@ def operation(*, write: bool = False):
                         )
                     return method(self, *args, **kwargs)
                 except Exception as exc:
-                    error = from_exception(exc, write=write, operation=method.__name__)
+                    error = from_exception(
+                        exc, write=write and zot is not None, operation=method.__name__
+                    )
                     raise error from exc
                 finally:
                     if zot is not None:
@@ -789,9 +826,7 @@ class Library:
         )
 
     @operation(write=True)
-    def create_collection(
-        self, name: str, parent_collection: str | None = None
-    ) -> WriteResponse:
+    def create_collection(self, name: str, parent_collection: str | None = None) -> WriteResponse:
         """Create a collection, optionally under a parent collection."""
         if not name.strip():
             raise ValueError("A collection name cannot be empty.")
