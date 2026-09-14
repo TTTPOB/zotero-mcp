@@ -381,6 +381,8 @@ def operation(*, write: bool = False):
                     error = from_exception(
                         exc, write=write and zot is not None, operation=method.__name__
                     )
+                    if error is exc:
+                        raise
                     raise error from exc
                 finally:
                     if zot is not None:
