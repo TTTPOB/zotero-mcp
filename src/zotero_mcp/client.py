@@ -5,7 +5,7 @@ import html
 import mimetypes
 import re
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from functools import wraps
 from pathlib import Path
 from typing import Any, Literal
@@ -75,6 +75,40 @@ def page(
         "offset": offset,
         "next_offset": offset + upstream_count if upstream_count == limit else None,
     }
+
+
+def _item_tags(item: Mapping[str, Any] | None) -> set[str]:
+    if not isinstance(item, Mapping):
+        return set()
+    data = item.get("data")
+    if not isinstance(data, Mapping):
+        return set()
+    tags = data.get("tags")
+    if not isinstance(tags, list):
+        return set()
+    return {
+        tag["tag"]
+        for tag in tags
+        if isinstance(tag, Mapping) and isinstance(tag.get("tag"), str)
+    }
+
+
+def _tag_expression_matches(expression: str, actual: set[str]) -> bool:
+    alternatives = [part.strip() for part in expression.split("||") if part.strip()]
+    if not alternatives:
+        return False
+    for alternative in alternatives:
+        if alternative.startswith("-"):
+            if alternative[1:] not in actual:
+                return True
+        elif alternative in actual:
+            return True
+    return False
+
+
+def _tags_match(item: Mapping[str, Any] | None, tags: list[str]) -> bool:
+    actual = _item_tags(item)
+    return all(_tag_expression_matches(expression, actual) for expression in tags)
 
 
 def write_result(result: dict) -> dict[str, Any]:
@@ -175,25 +209,74 @@ class Library:
         self,
         query: str = "",
         tags: list[str] | None = None,
-        item_type: str = "-attachment",
+        item_type: str | None = None,
         qmode: Literal["titleCreatorYear", "everything"] = "titleCreatorYear",
         limit: int = 25,
         offset: int = 0,
+        tag_scope: Literal["matched_item", "parent", "either"] = "matched_item",
         view: ReadView = "summary",
     ) -> dict[str, Any]:
-        """Search local metadata, tags or Zotero-indexed text as a read view.
+        """Search metadata, tags or Zotero-indexed text and return native hits.
 
-        qmode='everything' includes indexed attachment text. Tag filters use Zotero's
-        syntax: separate list entries are AND; 'a || b' is OR; '-tag' excludes a tag.
+        ``qmode='everything'`` includes attachment hits by default: no item type
+        filter is sent unless ``item_type`` is explicit. Metadata search keeps the
+        historical ``-attachment`` default. ``matched_item`` applies tags to the
+        native hit; ``parent`` applies them to its parent when it has one; ``either``
+        accepts either level. Attachment hits are not deduplicated into parent items.
+        Their summary includes ``matched_attachment_key`` and ``parent_key``.
         """
         normalize_view(view)
+        if not isinstance(qmode, str) or qmode not in {"titleCreatorYear", "everything"}:
+            raise ValueError("qmode must be titleCreatorYear or everything.")
+        if not isinstance(tag_scope, str) or tag_scope not in {"matched_item", "parent", "either"}:
+            raise ValueError("tag_scope must be matched_item, parent, or either.")
+        if not isinstance(query, str):
+            raise ValueError("query must be a string.")
+        if tags is not None and (
+            not isinstance(tags, list)
+            or any(not isinstance(tag, str) or not tag.strip() for tag in tags)
+        ):
+            raise ValueError("tags must be a list of non-empty strings.")
         if not query.strip() and not tags:
             raise ValueError("Provide a query or tags; use zotero_get_recent to browse.")
+        if item_type is not None and (not isinstance(item_type, str) or not item_type.strip()):
+            raise ValueError("item_type must be a non-empty string when provided.")
+
         params = pagination(limit, offset)
-        params.update(q=query, qmode=qmode, itemType=item_type)
-        if tags:
+        params.update(q=query, qmode=qmode)
+        if item_type is not None:
+            params["itemType"] = item_type
+        elif qmode != "everything":
+            params["itemType"] = "-attachment"
+        if tags and tag_scope == "matched_item":
             params["tag"] = tags
-        return self._page(self.zot.items(**params), limit, offset, view=view)
+        native_items = self.zot.items(**params)
+        filtered_items = native_items
+        if tags and tag_scope != "matched_item":
+            filtered_items = []
+            for item in native_items:
+                data = item.get("data", {}) if isinstance(item, Mapping) else {}
+                parent_item = None
+                parent = data.get("parentItem") if isinstance(data, Mapping) else None
+                if isinstance(parent, str) and parent:
+                    try:
+                        parent_item = self.zot.item(key(parent))
+                    except ResourceNotFoundError:
+                        parent_item = None
+                parent_item = parent_item or item
+                item_match = _tags_match(item, tags)
+                parent_match = _tags_match(parent_item, tags)
+                if (tag_scope == "parent" and parent_match) or (
+                    tag_scope == "either" and (item_match or parent_match)
+                ):
+                    filtered_items.append(item)
+        return self._page(
+            filtered_items,
+            limit,
+            offset,
+            view=view,
+            consumed_count=len(native_items),
+        )
 
     @operation()
     def get_item_metadata(

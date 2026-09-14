@@ -98,6 +98,51 @@ def test_lists_default_to_summary_and_keep_raw_escape_hatch(library, zot):
     assert raw_recent["items"][0]["library"] == native["library"]
 
 
+def test_everything_search_includes_native_attachment_hits(library, zot):
+    parent = _native_item("PAPER001", title="Parent")
+    attachment = _native_item(
+        "PDF00001", item_type="attachment", title="paper.pdf", parent_key="PAPER001"
+    )
+    zot.items.return_value = [parent, attachment]
+
+    result = library.search_items("body-only-term", qmode="everything", limit=25)
+
+    assert "itemType" not in zot.items.call_args.kwargs
+    assert [item["key"] for item in result["items"]] == ["PAPER001", "PDF00001"]
+    assert result["items"][1]["matched_attachment_key"] == "PDF00001"
+    assert result["items"][1]["parent_key"] == "PAPER001"
+
+
+def test_parent_tag_scope_is_explicit_and_bounded(library, zot):
+    attachment = _native_item(
+        "PDF00001", item_type="attachment", title="paper.pdf", parent_key="PAPER001"
+    )
+    parent = _native_item("PAPER001", title="Parent", tags=["review"])
+    zot.items.return_value = [attachment]
+    zot.item.side_effect = lambda item_key: parent if item_key == "PAPER001" else attachment
+
+    result = library.search_items(
+        "body-only-term",
+        tags=["review"],
+        qmode="everything",
+        tag_scope="parent",
+    )
+
+    assert "tag" not in zot.items.call_args.kwargs
+    assert [item["key"] for item in result["items"]] == ["PDF00001"]
+    zot.item.assert_called_once_with("PAPER001")
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"view": []}, {"qmode": []}, {"tag_scope": []}],
+)
+def test_search_selector_constraints_are_value_errors(library, zot, kwargs):
+    with pytest.raises(ValueError):
+        library.search_items("query", **kwargs)
+    zot.items.assert_not_called()
+
+
 def test_read_view_selector_rejects_unhashable_values(library, zot):
     with pytest.raises(ValueError):
         library.get_recent(view=[])

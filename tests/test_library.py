@@ -17,7 +17,6 @@ def test_search_passes_filters_and_pagination(library, zot):
     zot.items.assert_called_once_with(
         q="中文",
         tag=["keep", "-read"],
-        itemType="-attachment",
         qmode="everything",
         limit=1,
         start=2,
