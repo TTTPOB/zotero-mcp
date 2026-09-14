@@ -1045,7 +1045,6 @@ wheels = [
 
 [[package]]
 name = "zotero-mcp-server"
-version = "0.12.0+local.1"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },
