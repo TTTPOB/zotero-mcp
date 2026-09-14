@@ -1,0 +1,68 @@
+# 全文阅读
+
+`zotero_get_item_fulltext` 只读取 Zotero 已建立索引的附件文本，不下载附件、不做 OCR，也不重新解析 PDF。
+
+## 选择附件
+
+可以传入父文献的 `item_key`，也可以显式传入 `attachment_key`。
+
+- 显式 `attachment_key` 优先，适合补充材料、不同版本或连续阅读。
+- 父文献只有一个子附件时，使用该附件。
+- 父文献有多个附件但只有一个 `application/pdf` 时，使用这个 PDF。
+- 多个 PDF，或多个非 PDF 且没有唯一首选时，不会逐个试读后静默替换。工具返回 `FULLTEXT_ATTACHMENT_AMBIGUOUS`，错误详情只包含最多 5 个小型候选摘要。根据候选的 `attachment_key` 再次显式调用。
+- 候选的 `index_state` 是 `unknown`。附件存在、附件是 PDF、索引可读是三个不同状态；只有实际读取成功才能确认有文本。
+
+成功结果中的 `attachment_key` 是本次实际读取的附件。不要在后续分页中重新让父文献自动选择附件。
+
+## 连续读取
+
+第一次调用可以使用父文献 key：
+
+```json
+{
+  "item_key": "ABCD1234",
+  "max_characters": 20000
+}
+```
+
+保存响应中的 `attachment_key`、`text_revision` 和 `next_offset`。后续调用使用实际附件 key，并传回同一个 revision：
+
+```json
+{
+  "item_key": "ABCD1234",
+  "attachment_key": "PDF00001",
+  "offset": 20000,
+  "max_characters": 20000,
+  "text_revision": "sha256:..."
+}
+```
+
+实现不使用缓存或不透明游标。每次调用都会从 Zotero 重新取得该附件的完整索引文本，并对 UTF-8 编码的原文计算 SHA-256。revision 不匹配时返回 `FULLTEXT_REVISION_MISMATCH`，不会用新文本静默接续旧 offset；应从新结果的 offset 0 重新开始阅读。
+
+`offset` 是从 0 开始的 Unicode code point 索引，不是字节偏移，也不是 UTF-16 code unit。`next_offset` 是下一次调用应使用的 code point 起点；为 `null` 表示已读到文本末尾。`total_characters` 同样按 code point 计数。
+
+## 覆盖范围
+
+返回结果同时保留 Zotero 原始的 `index` 字段，并提供两个明确的覆盖字段：
+
+- `index_coverage.indexed_pages` / `total_pages` 是 Zotero 报告的索引页数。缺失时为 `null`，不会从附件类型或页数推断。索引页数不保证表格、公式、图片文字或文本顺序准确。
+- `reading_coverage.start` / `end` 是本次返回片段在完整索引文本中的 code point 区间，`complete` 表示是否已到全文末尾。它表示本工具返回给调用者的阅读范围，不表示已经读完论文。
+
+没有可读索引时返回 `FULLTEXT_NOT_INDEXED`。该错误不代表附件不存在，只表示此次 Zotero 全文端点没有可用文本。
+
+## 附件内查找
+
+`zotero_find_item_fulltext` 用于在一个**显式附件**的 Zotero 索引文本内跳读：
+
+```json
+{
+  "attachment_key": "PDF00001",
+  "query": "mitochondrial",
+  "context_characters": 120,
+  "max_matches": 20
+}
+```
+
+匹配规则固定为 Unicode `casefold` 后的字面量子串匹配：大小写不敏感，不使用正则表达式，不搜索父文献或整个资料库。结果中的 `start` 和 `end` 是原始未修改文本的 0 起始 code point 区间，`snippet_start`、`snippet_end` 是上下文片段在同一原文中的实际区间。工具最多返回 `max_matches` 个匹配；`text_revision` 可按连续读取的相同方式校验正文没有变化。
+
+该能力仍会让 Zotero 返回指定附件的完整索引文本，再在 MCP 进程内定位片段；它是轻量跳读工具，不是新的全文索引、向量检索或 PDF 解析器。
