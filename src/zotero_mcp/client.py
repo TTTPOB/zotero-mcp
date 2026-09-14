@@ -24,6 +24,7 @@ from zotero_mcp.fulltext import (
     text_revision,
 )
 from zotero_mcp.fulltext_models import FulltextChunk, FulltextFindResult
+from zotero_mcp.models import ItemDataList, ItemKey, ItemKeyList, Version, WriteResponse
 from zotero_mcp.presentation import ReadView, normalize_view, project_items
 
 
@@ -181,20 +182,146 @@ def _tags_match(item: Mapping[str, Any] | None, tags: list[str]) -> bool:
     return all(_tag_expression_matches(expression, actual) for expression in tags)
 
 
-def write_result(result: dict) -> dict[str, Any]:
-    if not isinstance(result, dict) or not {"successful", "success", "failed"} & result.keys():
-        raise RuntimeError(
-            "Zotero returned an unexpected write response; check the library before retrying."
+def _response_key(value: Any) -> str | None:
+    """Extract a created key from the response shapes returned by pyzotero."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        candidate = value.get("key")
+        return candidate if isinstance(candidate, str) else None
+    return None
+
+
+def _result_status(entries: list[dict[str, Any]]) -> str:
+    statuses = {entry["status"] for entry in entries}
+    if not statuses or statuses == {"success"} or statuses == {"unchanged"}:
+        return "success"
+    if statuses <= {"failed"}:
+        return "failed"
+    return "partial"
+
+
+def write_result(
+    result: dict,
+    *,
+    input_keys: list[str | None] | None = None,
+    input_count: int | None = None,
+) -> dict[str, Any]:
+    """Normalize pyzotero's indexed response while preserving legacy fields."""
+    if not isinstance(result, dict):
+        raise LibraryError(
+            "UNKNOWN_WRITE_RESULT",
+            "Zotero returned an unexpected write response; inspect the library before retrying.",
         )
-    if not any(result.get(field) for field in ("successful", "success", "unchanged", "failed")):
-        raise RuntimeError("Zotero returned no item results; check the library before retrying.")
-    return {
-        "ok": not bool(result.get("failed")),
-        "successful": result.get("successful", {}),
-        "success": result.get("success", {}),
-        "unchanged": result.get("unchanged", {}),
-        "failed": result.get("failed", {}),
+    fields = ("successful", "success", "unchanged", "failed", "pending")
+    if not any(field in result for field in fields):
+        raise LibraryError(
+            "UNKNOWN_WRITE_RESULT",
+            "Zotero returned an unexpected write response; inspect the library before retrying.",
+        )
+
+    successful = result.get("successful") or {}
+    success = result.get("success") or {}
+    unchanged = result.get("unchanged") or {}
+    failed = result.get("failed") or {}
+    pending = result.get("pending") or []
+    if not any((successful, success, unchanged, failed, pending)):
+        raise LibraryError(
+            "UNKNOWN_WRITE_RESULT",
+            "Zotero returned no item results; inspect the library before retrying.",
+        )
+
+    if input_keys is not None:
+        input_count = len(input_keys)
+    indexes: set[int] = set()
+    for values in (successful, success, failed):
+        if isinstance(values, dict):
+            indexes.update(int(index) for index in values if str(index).isdigit())
+    if isinstance(unchanged, dict):
+        indexes.update(int(index) for index in unchanged if str(index).isdigit())
+    elif isinstance(unchanged, list):
+        indexes.update(range(len(unchanged)))
+    if isinstance(pending, dict):
+        indexes.update(int(index) for index in pending if str(index).isdigit())
+    elif isinstance(pending, list):
+        indexes.update(
+            int(index) for index in pending if isinstance(index, int) or str(index).isdigit()
+        )
+    if input_count is not None:
+        indexes.update(range(input_count))
+
+    entries: list[dict[str, Any]] = []
+    for index in sorted(indexes):
+        source_key = (
+            input_keys[index] if input_keys is not None and index < len(input_keys) else None
+        )
+        successful_value = (
+            successful.get(str(index), successful.get(index))
+            if isinstance(successful, dict)
+            else None
+        )
+        success_value = (
+            success.get(str(index), success.get(index)) if isinstance(success, dict) else None
+        )
+        failed_value = (
+            failed.get(str(index), failed.get(index)) if isinstance(failed, dict) else None
+        )
+        unchanged_value = (
+            unchanged.get(str(index), unchanged.get(index))
+            if isinstance(unchanged, dict)
+            else (
+                unchanged[index] if isinstance(unchanged, list) and index < len(unchanged) else None
+            )
+        )
+        pending_value = (
+            pending.get(str(index), pending.get(index))
+            if isinstance(pending, dict)
+            else (index in pending if isinstance(pending, list) else False)
+        )
+        if failed_value is not None:
+            status = "failed"
+            value = failed_value
+        elif pending_value is not False and pending_value is not None:
+            status = "pending"
+            value = pending_value
+        elif successful_value is not None:
+            status = "success"
+            value = successful_value
+        elif success_value is not None:
+            status = "success"
+            value = success_value
+        elif unchanged_value is not None:
+            status = "unchanged"
+            value = unchanged_value
+        else:
+            # A response that omits an input is an unexecuted input, not success.
+            status = "pending"
+            value = None
+        entries.append(
+            {
+                "input_index": index,
+                "status": status,
+                "key": source_key or _response_key(value),
+                **({"error": value} if status == "failed" else {}),
+            }
+        )
+
+    pending_keys = [
+        entry["key"]
+        for entry in entries
+        if entry["status"] == "pending" and entry.get("key") is not None
+    ]
+    normalized = {
+        "ok": not any(entry["status"] in {"failed", "pending"} for entry in entries),
+        "status": _result_status(entries),
+        "results": entries,
+        "successful": successful,
+        "success": success,
+        "unchanged": unchanged,
+        "failed": failed,
+        "pending": pending_keys,
     }
+    return normalized
 
 
 def operation(*, write: bool = False):
@@ -570,7 +697,7 @@ class Library:
         }
 
     @operation(write=True)
-    def add_items(self, items: list[dict[str, Any]]) -> dict[str, Any]:
+    def add_items(self, items: ItemDataList) -> WriteResponse:
         """Create 1 to 50 items, notes or annotations from Zotero item-data objects.
 
         Use zotero_get_item_schema to check fields. Child notes/annotations need
@@ -586,10 +713,15 @@ class Library:
                 raise ValueError(
                     "Pass new item-data objects; use zotero_update_item to change existing items."
                 )
-        return write_result(self.zot.create_items(copy.deepcopy(items)))
+        return write_result(
+            self.zot.create_items(copy.deepcopy(items)),
+            input_count=len(items),
+        )
 
     @operation(write=True)
-    def update_item(self, item_key: str, version: int, changes: dict[str, Any]) -> dict[str, Any]:
+    def update_item(
+        self, item_key: ItemKey, version: Version, changes: dict[str, Any]
+    ) -> WriteResponse:
         """Patch item metadata, a note or annotation using its last-read local version.
 
         Only supplied fields change. Arrays such as tags, creators and collections
@@ -603,11 +735,19 @@ class Library:
             "version": version_number(version),
         }
         if self.zot.update_item(payload) is not True:
-            raise RuntimeError("Zotero did not confirm the update; check the item before retrying.")
-        return {"ok": True, "key": payload["key"]}
+            raise LibraryError(
+                "UNKNOWN_WRITE_RESULT",
+                "Zotero did not confirm the update; inspect the item before retrying.",
+            )
+        return {
+            "ok": True,
+            "status": "success",
+            "key": payload["key"],
+            "results": [{"input_index": 0, "key": payload["key"], "status": "success"}],
+        }
 
     @operation(write=True)
-    def delete_item(self, item_key: str, version: int) -> dict[str, Any]:
+    def delete_item(self, item_key: ItemKey, version: Version) -> WriteResponse:
         """Permanently delete an item (including child items), note or annotation.
 
         This does not move it to Trash. Supply its last-read local version.
@@ -617,17 +757,22 @@ class Library:
             raise RuntimeError(
                 "Zotero did not confirm deletion; check the library before retrying."
             )
-        return {"ok": True, "key": payload["key"]}
+        return {
+            "ok": True,
+            "status": "success",
+            "key": payload["key"],
+            "results": [{"input_index": 0, "key": payload["key"], "status": "success"}],
+        }
 
     @operation(write=True)
     def create_note(
         self,
-        parent_key: str,
+        parent_key: ItemKey,
         text: str,
         title: str = "",
         as_html: bool = False,
         tags: list[str] | None = None,
-    ) -> dict[str, Any]:
+    ) -> WriteResponse:
         """Create a child note. Escape plain text by default; as_html preserves Zotero HTML."""
         content = text if as_html else "<p>" + html.escape(text).replace("\n", "<br/>") + "</p>"
         if title:
@@ -644,7 +789,9 @@ class Library:
         )
 
     @operation(write=True)
-    def create_collection(self, name: str, parent_collection: str | None = None) -> dict[str, Any]:
+    def create_collection(
+        self, name: str, parent_collection: str | None = None
+    ) -> WriteResponse:
         """Create a collection, optionally under a parent collection."""
         if not name.strip():
             raise ValueError("A collection name cannot be empty.")
@@ -652,16 +799,16 @@ class Library:
             "name": name,
             "parentCollection": key(parent_collection) if parent_collection else False,
         }
-        return write_result(self.zot.create_collections([payload]))
+        return write_result(self.zot.create_collections([payload]), input_count=1)
 
     @operation(write=True)
     def update_collection(
         self,
-        collection_key: str,
-        version: int,
+        collection_key: ItemKey,
+        version: Version,
         name: str | None = None,
         parent_collection: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> WriteResponse:
         """Rename/move a collection. Use parent_collection='' to move it to the root."""
         if name is None and parent_collection is None:
             raise ValueError("Provide a name or parent_collection to change.")
@@ -671,8 +818,9 @@ class Library:
         version_number(version)
         current = self.zot.collection(collection_key)
         if current["version"] != version:
-            raise ValueError(
-                "The collection changed. Read its current local version before retrying."
+            raise LibraryError(
+                "VERSION_CONFLICT",
+                "The collection changed. Re-read its current local version before retrying.",
             )
         payload = {
             "key": collection_key,
@@ -686,43 +834,96 @@ class Library:
             payload["parentCollection"] = key(parent_collection) if parent_collection else False
         if self.zot.update_collection(payload) is not True:
             raise RuntimeError("Zotero did not confirm the collection update.")
-        return {"ok": True, "key": collection_key}
+        return {
+            "ok": True,
+            "status": "success",
+            "key": collection_key,
+            "results": [{"input_index": 0, "key": collection_key, "status": "success"}],
+        }
 
     @operation(write=True)
-    def delete_collection(self, collection_key: str, version: int) -> dict[str, Any]:
+    def delete_collection(self, collection_key: ItemKey, version: Version) -> WriteResponse:
         """Permanently delete a collection. Library items remain; child collections are also removed."""
         payload = {"key": key(collection_key), "version": version_number(version)}
         if self.zot.delete_collection(payload) is not True:
             raise RuntimeError("Zotero did not confirm collection deletion.")
-        return {"ok": True, "key": payload["key"]}
+        return {
+            "ok": True,
+            "status": "success",
+            "key": payload["key"],
+            "results": [{"input_index": 0, "key": payload["key"], "status": "success"}],
+        }
 
     def _edit_lists(
         self, item_keys: list[str], field: str, change: Callable[[list], list]
     ) -> dict[str, Any]:
         if not 1 <= len(item_keys) <= 50:
             raise ValueError("Provide 1 to 50 item keys.")
-        keys = list(dict.fromkeys(key(k) for k in item_keys))
-        result = {"ok": True, "updated": [], "unchanged": [], "failed": {}, "pending": []}
-        for index, item_key in enumerate(keys):
+        indexed_keys: list[tuple[int, str]] = []
+        seen: set[str] = set()
+        for input_index, raw_key in enumerate(item_keys):
+            normalized = key(raw_key)
+            if normalized not in seen:
+                indexed_keys.append((input_index, normalized))
+                seen.add(normalized)
+        result = {
+            "ok": True,
+            "status": "success",
+            "results": [],
+            "updated": [],
+            "unchanged": [],
+            "failed": {},
+            "pending": [],
+        }
+        for position, (input_index, item_key) in enumerate(indexed_keys):
             try:
                 item = self.zot.item(item_key)
                 original = item["data"].get(field, [])
                 updated = change(copy.deepcopy(original))
                 if updated == original:
                     result["unchanged"].append(item_key)
+                    result["results"].append(
+                        {"input_index": input_index, "key": item_key, "status": "unchanged"}
+                    )
                     continue
                 self.update_item(item_key, item["version"], {field: updated})
                 result["updated"].append(item_key)
+                result["results"].append(
+                    {"input_index": input_index, "key": item_key, "status": "success"}
+                )
             except Exception as exc:
                 # Keep completed work visible; never silently replay a partial batch.
-                result.update(ok=False, failed={item_key: str(exc)}, pending=keys[index + 1 :])
+                error = from_exception(exc, write=True, operation=f"batch_{field}")
+                result["ok"] = False
+                result["status"] = "partial"
+                result["failed"][item_key] = error.as_dict()["error"]
+                result["results"].append(
+                    {
+                        "input_index": input_index,
+                        "key": item_key,
+                        "status": "failed",
+                        "error": error.as_dict()["error"],
+                    }
+                )
+                for pending_index, pending_key in indexed_keys[position + 1 :]:
+                    result["pending"].append(pending_key)
+                    result["results"].append(
+                        {
+                            "input_index": pending_index,
+                            "key": pending_key,
+                            "status": "pending",
+                        }
+                    )
                 break
         return result
 
     @operation(write=True)
     def batch_update_tags(
-        self, item_keys: list[str], add: list[str] | None = None, remove: list[str] | None = None
-    ) -> dict[str, Any]:
+        self,
+        item_keys: ItemKeyList,
+        add: list[str] | None = None,
+        remove: list[str] | None = None,
+    ) -> WriteResponse:
         """Add/remove tags while preserving other tags and tag types.
 
         Read each item's current local version before writing. On the first error,
@@ -748,8 +949,11 @@ class Library:
 
     @operation(write=True)
     def manage_collection_items(
-        self, collection_key: str, item_keys: list[str], action: Literal["add", "remove"]
-    ) -> dict[str, Any]:
+        self,
+        collection_key: ItemKey,
+        item_keys: ItemKeyList,
+        action: Literal["add", "remove"],
+    ) -> WriteResponse:
         """Add/remove up to 50 items from a collection, preserving other memberships.
 
         Stop at the first failure and report completed and pending keys.
@@ -772,8 +976,8 @@ class Library:
 
     @operation(write=True)
     def attach_file(
-        self, parent_key: str, file_path: str, title: str | None = None
-    ) -> dict[str, Any]:
+        self, parent_key: ItemKey, file_path: str, title: str | None = None
+    ) -> WriteResponse:
         """Copy an existing absolute-path file into Zotero's local attachment storage.
 
         No URL download. If upload fails after creation, returns the attachment key
@@ -791,24 +995,66 @@ class Library:
             "filename": path.name,
             "contentType": mimetypes.guess_type(path.name)[0] or "application/octet-stream",
         }
-        created = write_result(self.zot.create_items([metadata]))
+        created = write_result(self.zot.create_items([metadata]), input_count=1)
         if not created["ok"]:
             return created
-        attachment_key = created["success"].get("0")
+        attachment_key = next(
+            (
+                entry.get("key")
+                for entry in created["results"]
+                if entry["status"] == "success" and entry.get("key")
+            ),
+            None,
+        )
         if not attachment_key:
-            attachment_key = created["successful"].get("0", {}).get("key")
-        if not attachment_key:
-            raise RuntimeError(
-                "Zotero created an attachment without returning its key; check the library."
+            raise LibraryError(
+                "UNKNOWN_WRITE_RESULT",
+                "Zotero created an attachment without returning its key; inspect the library.",
             )
         try:
             result = self.zot.upload_attachments(
                 [{**metadata, "key": attachment_key}], basedir=str(path.parent)
             )
-            return {"ok": not bool(result["failure"]), "attachment_key": attachment_key, **result}
+            if not isinstance(result, dict):
+                raise LibraryError(
+                    "UNKNOWN_WRITE_RESULT",
+                    "Zotero returned an unexpected attachment upload response; inspect the library.",
+                )
+            failed = result.get("failure")
+            return {
+                **result,
+                "ok": not bool(failed),
+                "status": "failed" if failed else "success",
+                "stage": "upload",
+                "attachment_key": attachment_key,
+                "results": [
+                    {
+                        "input_index": 0,
+                        "key": attachment_key,
+                        "status": "failed" if failed else "success",
+                        "stage": "upload",
+                        **({"error": failed} if failed else {}),
+                    }
+                ],
+            }
+        except LibraryError:
+            raise
         except Exception as exc:
+            error = from_exception(exc, write=True, operation="attach_file.upload")
             return {
                 "ok": False,
+                "status": "failed",
+                "stage": "upload",
                 "attachment_key": attachment_key,
+                "results": [
+                    {
+                        "input_index": 0,
+                        "key": attachment_key,
+                        "status": "failed",
+                        "stage": "upload",
+                        "error": error.as_dict()["error"],
+                    }
+                ],
                 "error": f"Attachment created but upload failed: {exc}. Inspect it before retrying.",
+                "error_details": error.as_dict()["error"],
             }
