@@ -5,11 +5,10 @@ import pytest
 from pyzotero import (
     LocalAPIKeyRequiredError,
     PreConditionFailedError,
-    ResourceNotFoundError,
     ServerIDMismatchError,
 )
 
-from zotero_mcp.client import Library, key, pagination, write_result
+from zotero_mcp.client import FulltextError, Library, key, pagination, write_result
 
 
 def test_search_passes_filters_and_pagination(library, zot):
@@ -224,17 +223,24 @@ def test_fulltext_uses_index_and_character_paging(library, zot):
     assert result["index"]["indexedPages"] == 2
 
 
-def test_unindexed_attachment_falls_back(library, zot):
+def test_multiple_attachments_are_not_probed_or_silently_replaced(library, zot):
     zot.children.return_value = [
         {"key": k, "data": {"itemType": "attachment"}} for k in ("ATTACH01", "ATTACH02")
     ]
-    zot.fulltext_item.side_effect = [ResourceNotFoundError("unindexed"), {"content": "available"}]
-    assert library.get_item_fulltext("ABCD1234")["attachment_key"] == "ATTACH02"
+    with pytest.raises(FulltextError) as caught:
+        library.get_item_fulltext("ABCD1234")
+    assert caught.value.code == "FULLTEXT_ATTACHMENT_AMBIGUOUS"
+    assert [candidate["attachment_key"] for candidate in caught.value.details["candidates"]] == [
+        "ATTACH01",
+        "ATTACH02",
+    ]
+    zot.fulltext_item.assert_not_called()
 
 
 def test_no_text_is_actionable(library):
-    with pytest.raises(ValueError, match="Index the attachment"):
+    with pytest.raises(FulltextError) as caught:
         library.get_item_fulltext("ABCD1234")
+    assert caught.value.code == "FULLTEXT_ATTACHMENT_NOT_FOUND"
 
 
 def test_failed_query_state_cleared(library, zot):

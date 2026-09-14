@@ -20,6 +20,7 @@ from pyzotero import (
 )
 
 from zotero_mcp.config import Settings, load_auth
+from zotero_mcp.fulltext import FulltextError, select_attachment
 from zotero_mcp.presentation import ReadView, normalize_view, project_items
 
 
@@ -436,46 +437,55 @@ class Library:
 
     @operation()
     def get_item_fulltext(
-        self, item_key: str, offset: int = 0, max_characters: int = 20000
+        self, item_key: str, offset: int = 0, max_characters: int = 20000,
+        attachment_key: str | None = None,
     ) -> dict[str, Any]:
-        """Read Zotero's indexed text. Accept a paper or attachment key.
+        """Read Zotero's indexed text from one transparently selected attachment.
 
-        For a paper, select its first indexed attachment (PDFs first). For other
-        attachments, pass their key directly. Offsets count Unicode characters.
-        No OCR or separate PDF extraction is performed.
+        Explicit ``attachment_key`` wins. For a parent item, a sole attachment or
+        sole PDF is selected; ambiguous parents return candidate summaries. Offsets
+        count Unicode characters. No OCR or separate PDF extraction is performed.
         """
         pagination(1, offset)
         if type(max_characters) is not int or not 1 <= max_characters <= 50000:
             raise ValueError("max_characters must be between 1 and 50000.")
-        item = self.zot.item(key(item_key))
-        if item["data"]["itemType"] == "attachment":
-            attachments = [item]
+        item_key = key(item_key)
+        if attachment_key is not None:
+            selected_key = key(attachment_key)
         else:
-            attachments = self.zot.everything(
-                self.zot.children(key(item_key), itemType="attachment")
+            item = self.zot.item(item_key)
+            if item.get("data", {}).get("itemType") == "attachment":
+                selected_key = item_key
+            else:
+                attachments = self.zot.everything(
+                    self.zot.children(item_key, itemType="attachment")
+                )
+                selected = select_attachment(attachments, parent_key=item_key)
+                selected_key = key(selected["key"])
+        try:
+            fulltext = self.zot.fulltext_item(selected_key)
+        except ResourceNotFoundError as exc:
+            raise FulltextError(
+                "FULLTEXT_NOT_INDEXED",
+                "No indexed text is available for this attachment. Index it in Zotero first.",
+                details={"attachment_key": selected_key},
+            ) from exc
+        content = fulltext.get("content", "")
+        if not isinstance(content, str) or not content:
+            raise FulltextError(
+                "FULLTEXT_NOT_INDEXED",
+                "No indexed text is available for this attachment. Index it in Zotero first.",
+                details={"attachment_key": selected_key},
             )
-            attachments.sort(key=lambda a: a["data"].get("contentType") != "application/pdf")
-        for attachment in attachments:
-            attachment_key = attachment["key"]
-            try:
-                fulltext = self.zot.fulltext_item(attachment_key)
-            except ResourceNotFoundError:
-                continue
-            content = fulltext.get("content", "")
-            if not content:
-                continue
-            end = min(offset + max_characters, len(content))
-            return {
-                "attachment_key": attachment_key,
-                "content": content[offset:end],
-                "offset": offset,
-                "next_offset": end if end < len(content) else None,
-                "total_characters": len(content),
-                "index": {k: v for k, v in fulltext.items() if k != "content"},
-            }
-        raise ValueError(
-            "No indexed attachment text is available. Index the attachment in Zotero first."
-        )
+        end = min(offset + max_characters, len(content))
+        return {
+            "attachment_key": selected_key,
+            "content": content[offset:end],
+            "offset": offset,
+            "next_offset": end if end < len(content) else None,
+            "total_characters": len(content),
+            "index": {name: value for name, value in fulltext.items() if name != "content"},
+        }
 
     @operation()
     def get_item_schema(self, item_type: str | None = None) -> dict[str, Any]:
