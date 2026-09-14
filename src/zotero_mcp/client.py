@@ -19,6 +19,7 @@ from pyzotero import (
 )
 
 from zotero_mcp.config import Settings, load_auth
+from zotero_mcp.presentation import ReadView, normalize_view, project_items
 
 
 def new_client(settings: Settings | None = None) -> Zotero:
@@ -54,12 +55,25 @@ def pagination(limit: int, offset: int) -> dict[str, Any]:
     return {"limit": limit, "start": offset}
 
 
-def page(items: list, limit: int, offset: int) -> dict[str, Any]:
+def page(
+    items: list,
+    limit: int,
+    offset: int,
+    *,
+    view: ReadView = "raw",
+    consumed_count: int | None = None,
+) -> dict[str, Any]:
+    """Build a projected page using a bounded native-count fallback."""
+    normalize_view(view)
+    projected = project_items(items, view)
+    upstream_count = len(items) if consumed_count is None else consumed_count
+    if type(upstream_count) is not int or upstream_count < 0:
+        raise ValueError("consumed_count must be a nonnegative integer.")
     # A full last page can require one final empty request; no unbounded scan.
     return {
-        "items": items,
+        "items": projected,
         "offset": offset,
-        "next_offset": offset + len(items) if len(items) == limit else None,
+        "next_offset": offset + upstream_count if upstream_count == limit else None,
     }
 
 
@@ -138,6 +152,24 @@ class Library:
                 self._zot.client.close()
                 self._zot = None
 
+    def _page(
+        self,
+        items: list,
+        limit: int,
+        offset: int,
+        *,
+        view: ReadView = "raw",
+        consumed_count: int | None = None,
+    ) -> dict[str, Any]:
+        normalize_view(view)
+        return page(
+            items,
+            limit,
+            offset,
+            view=view,
+            consumed_count=consumed_count,
+        )
+
     @operation()
     def search_items(
         self,
@@ -147,80 +179,108 @@ class Library:
         qmode: Literal["titleCreatorYear", "everything"] = "titleCreatorYear",
         limit: int = 25,
         offset: int = 0,
+        view: ReadView = "summary",
     ) -> dict[str, Any]:
-        """Search local metadata, tags or Zotero-indexed text. Use next_offset to page.
+        """Search local metadata, tags or Zotero-indexed text as a read view.
 
         qmode='everything' includes indexed attachment text. Tag filters use Zotero's
         syntax: separate list entries are AND; 'a || b' is OR; '-tag' excludes a tag.
         """
+        normalize_view(view)
         if not query.strip() and not tags:
             raise ValueError("Provide a query or tags; use zotero_get_recent to browse.")
         params = pagination(limit, offset)
         params.update(q=query, qmode=qmode, itemType=item_type)
         if tags:
             params["tag"] = tags
-        return page(self.zot.items(**params), limit, offset)
+        return self._page(self.zot.items(**params), limit, offset, view=view)
 
     @operation()
-    def get_item_metadata(self, item_key: str) -> dict[str, Any]:
-        """Read an item's full metadata and local version, including notes/annotations."""
-        return self.zot.item(key(item_key))
+    def get_item_metadata(
+        self, item_key: str, view: ReadView = "metadata"
+    ) -> dict[str, Any]:
+        """Read semantic metadata by default; use ``view='raw'`` for Zotero's object."""
+        item = self.zot.item(key(item_key))
+        return project_items([item], view)[0]
 
     @operation()
-    def get_item_children(self, item_key: str, limit: int = 25, offset: int = 0) -> dict[str, Any]:
+    def get_item_children(
+        self, item_key: str, limit: int = 25, offset: int = 0, view: ReadView = "summary"
+    ) -> dict[str, Any]:
         """List an item's child attachments, notes or annotations."""
-        return page(self.zot.children(key(item_key), **pagination(limit, offset)), limit, offset)
+        return self._page(
+            self.zot.children(key(item_key), **pagination(limit, offset)),
+            limit,
+            offset,
+            view=view,
+        )
 
     @operation()
     def get_collections(self, limit: int = 25, offset: int = 0) -> dict[str, Any]:
         """List collections with keys, parentCollection and local versions."""
-        return page(self.zot.collections(**pagination(limit, offset)), limit, offset)
+        return self._page(self.zot.collections(**pagination(limit, offset)), limit, offset)
 
     @operation()
     def get_collection_items(
-        self, collection_key: str, limit: int = 25, offset: int = 0
+        self,
+        collection_key: str,
+        limit: int = 25,
+        offset: int = 0,
+        view: ReadView = "summary",
     ) -> dict[str, Any]:
-        """List items directly filed in a collection, with pagination."""
-        return page(
+        """List collection items as summaries; request metadata or raw when needed."""
+        return self._page(
             self.zot.collection_items(key(collection_key), **pagination(limit, offset)),
             limit,
             offset,
+            view=view,
         )
 
     @operation()
     def get_tags(self, limit: int = 100, offset: int = 0) -> dict[str, Any]:
         """List tags in the configured local library."""
-        return page(self.zot.tags(**pagination(limit, offset)), limit, offset)
+        return self._page(self.zot.tags(**pagination(limit, offset)), limit, offset)
 
     @operation()
-    def get_recent(self, limit: int = 25, offset: int = 0) -> dict[str, Any]:
-        """List top-level items, most recently added first."""
-        return page(
+    def get_recent(
+        self, limit: int = 25, offset: int = 0, view: ReadView = "summary"
+    ) -> dict[str, Any]:
+        """List all top-level items, including independent attachments, as summaries."""
+        return self._page(
             self.zot.top(sort="dateAdded", direction="desc", **pagination(limit, offset)),
             limit,
             offset,
+            view=view,
         )
 
     @operation()
     def get_notes(
-        self, parent_key: str | None = None, limit: int = 25, offset: int = 0
+        self,
+        parent_key: str | None = None,
+        limit: int = 25,
+        offset: int = 0,
+        view: ReadView = "metadata",
     ) -> dict[str, Any]:
         """Read notes, optionally restricted to a parent item."""
         params = {**pagination(limit, offset), "itemType": "note"}
         items = (
             self.zot.children(key(parent_key), **params) if parent_key else self.zot.items(**params)
         )
-        return page(items, limit, offset)
+        return self._page(items, limit, offset, view=view)
 
     @operation()
     def get_annotations(
-        self, attachment_key: str, limit: int = 25, offset: int = 0
+        self,
+        attachment_key: str,
+        limit: int = 25,
+        offset: int = 0,
+        view: ReadView = "metadata",
     ) -> dict[str, Any]:
         """Read Zotero reader annotations belonging to an attachment."""
         items = self.zot.children(
             key(attachment_key), itemType="annotation", **pagination(limit, offset)
         )
-        return page(items, limit, offset)
+        return self._page(items, limit, offset, view=view)
 
     @operation()
     def get_item_fulltext(
