@@ -7,7 +7,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
 ReadView = Literal["summary", "metadata", "raw"]
 ReadItemKey = Annotated[str, Field(min_length=8, max_length=8, pattern=r"^[A-Za-z0-9]{8}$")]
@@ -19,30 +19,54 @@ ReadMaxMatches = Annotated[int, Field(ge=1, le=100)]
 ReadTag = Annotated[str, Field(min_length=1)]
 
 
-class FulltextEntry(BaseModel):
-    """A lightweight route to Zotero's fulltext reader."""
+def _serialize_value(value: Any) -> Any:
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json", exclude_unset=True)
+    if isinstance(value, list):
+        return [_serialize_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _serialize_value(item) for key, item in value.items()}
+    return value
+
+
+class _FieldsSetModel(BaseModel):
+    """Serialize only fields supplied by the business result, retaining raw extras."""
 
     model_config = ConfigDict(extra="allow")
+
+    @model_serializer(mode="plain")
+    def _serialize_fields_set(self) -> dict[str, Any]:
+        result = {
+            name: _serialize_value(getattr(self, name))
+            for name in self.model_fields_set
+        }
+        result.update(
+            {
+                name: _serialize_value(value)
+                for name, value in (self.model_extra or {}).items()
+            }
+        )
+        return result
+
+
+class FulltextEntry(_FieldsSetModel):
+    """A lightweight route to Zotero's fulltext reader."""
 
     read_key: str | None = None
     candidate_attachment_key: str | None = None
     index_state: Literal["unknown"] | None = None
 
 
-class MatchDetails(BaseModel):
+class MatchDetails(_FieldsSetModel):
     """Optional native match relation, never a guessed field or score."""
-
-    model_config = ConfigDict(extra="allow")
 
     kind: Literal["native"] | None = None
     matched_attachment_key: str | None = None
     parent_key: str | None = None
 
 
-class ItemSummary(BaseModel):
+class ItemSummary(_FieldsSetModel):
     """Stable discovery fields shared by search and list views."""
-
-    model_config = ConfigDict(extra="allow")
 
     key: str | None = None
     version: int | None = None
@@ -58,10 +82,8 @@ class ItemSummary(BaseModel):
     fulltext: FulltextEntry | None = None
 
 
-class ItemMetadata(BaseModel):
+class ItemMetadata(_FieldsSetModel):
     """Semantic item metadata while allowing an explicit raw escape hatch."""
-
-    model_config = ConfigDict(extra="allow")
 
     key: str | None = None
     version: int | None = None
@@ -70,10 +92,8 @@ class ItemMetadata(BaseModel):
     data: dict[str, Any] | None = None
 
 
-class ItemPage(BaseModel):
+class ItemPage(_FieldsSetModel):
     """A paged list whose item union preserves summary, metadata, and raw views."""
-
-    model_config = ConfigDict(extra="allow")
 
     items: list[dict[str, Any] | ItemSummary | ItemMetadata] = Field(default_factory=list)
     offset: int = 0

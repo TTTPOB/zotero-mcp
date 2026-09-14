@@ -69,8 +69,13 @@ async def test_summary_metadata_raw_and_query_error_are_protocol_safe(library, z
             "zotero_get_item_metadata", {"item_key": "abcd1234", "view": "raw"}
         )
         assert raw.isError is False
-        assert raw.structuredContent["library"] == native["library"]
-        assert raw.structuredContent["links"] == native["links"]
+        assert raw.structuredContent == native
+
+        raw_list = await session.call_tool(
+            "zotero_get_recent", {"limit": 1, "view": "raw"}
+        )
+        assert raw_list.isError is False
+        assert raw_list.structuredContent["items"] == [native]
 
         empty = await session.call_tool("zotero_search_items", {"query": "", "tags": []})
         assert empty.isError is True
