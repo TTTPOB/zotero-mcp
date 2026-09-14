@@ -28,12 +28,12 @@
 - `FULLTEXT_NOT_INDEXED`：全文工具没有可读取的附件索引，并在 `details.attachment_key` 保留来源。
 - `FULLTEXT_ATTACHMENT_AMBIGUOUS`：自动选择有歧义，候选附件在 `details.candidates`。
 - `FULLTEXT_REVISION_MISMATCH`：连续读取的文本 revision 已变化，`details` 保留 expected/actual。
-- `UNAUTHORIZED`：本地授权缺失、撤销或 server ID 未提供。
+- `UNAUTHORIZED`：本地授权缺失、撤销或被 Zotero 拒绝。
 - `VERSION_CONFLICT`：本地条目版本或 Zotero server ID 不匹配。
 - `CONNECTION_ERROR`：读操作或尚未开始写请求时无法连接 Zotero。
 - `UNKNOWN_WRITE_RESULT`：写请求期间连接中断、响应不完整或无法确认结果。
 - `LIBRARY_LOCKED`：Zotero 正在锁定库。
-- `UNSUPPORTED_VERSION`：使用了不支持本地 API 的客户端。
+- `UNSUPPORTED_VERSION`：客户端未使用本地 API，或 Zotero 未提供受支持的 server ID。
 
 `retryable` 只表示客户端是否可以安全地再次尝试。写请求传输中断一律不是可自动重试；先读取库确认状态。`details` 只用于补充字段位置、操作名等结构化信息，客户端不应依赖其中所有字段都存在。
 
@@ -62,4 +62,4 @@
 
 更新和删除要求调用者传入最近读取到的本地 `version`。写成功结果只在 Zotero 或 pyzotero 确实返回新版本时才可携带版本；拿不到确认版本时不会猜测 `version + 1`，调用者应重读条目。`changes` 是补丁字段，不是 summary 或原生对象的无条件往返写回。
 
-创建工具的 MCP annotation 将 `destructiveHint` 标记为 false；这只是客户端提示，不替代本地授权、版本约束和人工确认。
+创建工具的 MCP annotation 将 `destructiveHint` 标记为 false；这只是客户端提示，不替代本地授权和版本约束，也不是额外的确认机制。

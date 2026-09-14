@@ -7,7 +7,7 @@
 | 工具 | 用途 |
 | --- | --- |
 | `search_items` | 搜索标题/作者/年份、标签；`qmode=everything` 包含 Zotero 索引的文本 |
-| `get_item_metadata` | 读取完整条目、`key` 和本地 `version` |
+| `get_item_metadata` | 默认读取语义元数据、`key` 和本地 `version`；`view=raw` 获取原生对象 |
 | `get_item_children` | 列出子附件、笔记或批注 |
 | `get_collections` | 列出集合及其父集合和版本 |
 | `get_collection_items` | 列出直接属于某集合的条目 |
@@ -15,13 +15,20 @@
 | `get_recent` | 按添加时间列出最近的顶层条目 |
 | `get_notes` | 读取笔记，可指定父条目 |
 | `get_annotations` | 读取指定附件的 Zotero 批注 |
-| `get_item_fulltext` | 读取 Zotero 已索引全文，按字符分页 |
+| `get_item_fulltext` | 读取选定附件的 Zotero 索引文本，按字符分页并校验文本版本 |
+| `find_item_fulltext` | 在指定附件的索引文本中查找字面量，返回附近片段和原文字符位置 |
 | `get_item_schema` | 从本地 Zotero 查询条目类型、字段和作者类型 |
 | `export_items` | 通过本地 Zotero 导出 BibTeX、RIS、CSL JSON |
 
-列表工具接受 `limit`（1–100）和 `offset`。返回 `next_offset` 后，用它继续读取；`null` 表示结束。最后一页刚好达到 limit 时，可能需要再请求一次空页。
+搜索、最近条目、集合条目、子条目列表默认使用 `view=summary`；`view=metadata` 保留语义元数据，`view=raw` 返回原生记录。笔记和批注列表默认 metadata，保留正文。视图不截断完整标题、不静默隐藏独立附件，也不从附件存在推断索引可读。
 
-全文工具接受论文或附件 key。传论文 key 时优先选择有索引的 PDF；要读其他附件，先调用 `get_item_children`，再传附件 key。`offset` 和 `max_characters` 按 Unicode 字符计数。`index` 返回 Zotero 提供的索引覆盖信息，索引可能只覆盖附件的部分页面。
+搜索需要 `query` 或有效 `tags` 至少一项，tags-only 合法。`qmode=everything` 默认不排除附件，显式 `item_type` 筛选原生命中对象；结果提供父 key，保持上游顺序而不合并父子条目。`tag_scope=matched_item`（默认）由 Zotero 筛选命中对象的标签，`parent` / `either` 在当前原生页内检查相应层级。
+
+列表工具接受 `limit`（1–100）和 `offset`。始终用返回的 `next_offset` 续页，`null` 表示结束；父标签过滤后即使本页为空，也可能还有下一页。分页使用原生页的已消费位置及响应信息；上游没有可靠分页信息且最后一页刚好满页时，可能需要再请求一次空页。它不提供库修改期间的快照保证。
+
+全文工具接受论文或附件 key。传父文献时透明选择附件；无法确定时返回候选清单，再指定 `attachment_key`。续读传回实际附件 key 和 `text_revision`，文本改变会要求重新开始。偏移以 0 起始 Unicode code point 计数，`max_characters` 为 1–50,000。索引页数和本次返回的文本范围分别表达，不表示 Agent 已通读附件。
+
+`find_item_fulltext` 只查指定附件，使用不区分大小写的字面量匹配，返回片段及原文字符位置，不进行全库扫描。详见 [读取视图](read-views.md) 与 [全文阅读](fulltext-reading.md)。
 
 ## 写入
 
@@ -44,9 +51,11 @@
 
 `update_item` 只更改你传入的字段，但数组字段会整体替换。因此，增删标签优先使用 `batch_update_tags`，调整集合归属优先使用 `manage_collection_items`。
 
-批量标签或集合归属修改遇到错误时会停止。返回值中的 `updated`、`unchanged`、`failed`、`pending` 分别列出已修改、未变化、失败及未处理的 key。批量创建则遵循 Zotero 的逐条结果，`success`/`successful` 和 `failed` 可以同时有内容。
+批量标签或集合归属修改遇到错误时会停止。`results` 按输入索引和 key 关联逐项结果，旧的 `updated`、`unchanged`、`failed`、`pending` 等聚合字段继续保留。批量创建遵循 Zotero 的逐条结果，成功和失败可同时存在；响应未确认的输入需要检查库状态，不能当作未执行直接重放。
 
-附件上传若在创建条目之后失败，返回 `ok=false` 和 `attachment_key`。先检查该附件，避免重新调用产生重复项。
+附件上传若在创建条目之后失败，保留 `attachment_key` 和 `stage`。先检查该附件，避免重新调用产生重复项。工具级错误使用稳定的 `code`、`message`、`retryable` 和 MCP `isError=true`；部分批量结果保留已完成项，恢复方法见 [错误与写入](errors-and-writes.md)。
+
+更新后没有服务器确认的新版本时，下一次修改前重新读取，不自行把旧版本加一。
 
 ## 示例
 
