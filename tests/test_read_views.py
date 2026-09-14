@@ -58,6 +58,22 @@ def test_summary_keeps_native_order_titles_and_attachment_relation():
     assert summaries[2]["parent_key"] is None
 
 
+def test_summary_extracts_enclosure_candidate_without_claiming_index():
+    item = _native_item("PAPER001", title="Parent")
+    item["links"]["enclosure"] = {
+        "href": "http://localhost:23119/api/users/0/items/PDF00001/file"
+    }
+
+    summary = project_items([item], "summary")[0]
+
+    assert summary["fulltext"] == {
+        "read_key": "PAPER001",
+        "candidate_attachment_key": "PDF00001",
+        "index_state": "unknown",
+    }
+    assert "match" not in summary
+
+
 def test_metadata_is_semantic_and_raw_is_unchanged(library, zot):
     native = _native_item("PAPER001", abstract="Long abstract")
     zot.item.side_effect = None

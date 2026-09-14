@@ -6,6 +6,7 @@ import copy
 import re
 from collections.abc import Mapping, Sequence
 from typing import Annotated, Any, Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
@@ -103,6 +104,7 @@ class ItemPage(_FieldsSetModel):
 
 _VALID_VIEWS = {"summary", "metadata", "raw"}
 _YEAR_RE = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
+_KEY_RE = re.compile(r"(?<![A-Za-z0-9])([A-Za-z0-9]{8})(?![A-Za-z0-9])")
 
 
 def normalize_view(view: str) -> ReadView:
@@ -119,6 +121,17 @@ def _data(item: Mapping[str, Any]) -> Mapping[str, Any]:
 def _parent_key(data: Mapping[str, Any]) -> str | None:
     parent = data.get("parentItem")
     return parent if isinstance(parent, str) and parent else None
+
+
+def _enclosure_key(item: Mapping[str, Any]) -> str | None:
+    links = item.get("links")
+    enclosure = links.get("enclosure") if isinstance(links, Mapping) else None
+    href = enclosure.get("href") if isinstance(enclosure, Mapping) else enclosure
+    if not isinstance(href, str):
+        return None
+    path = urlparse(href).path
+    matches = _KEY_RE.findall(path)
+    return matches[-1].upper() if matches else None
 
 
 def _year(data: Mapping[str, Any]) -> int | None:
@@ -172,8 +185,9 @@ def _summary(item: Mapping[str, Any], *, search: bool) -> dict[str, Any]:
     if not isinstance(title, str):
         title = data.get("filename") if isinstance(data.get("filename"), str) else ""
     fulltext: dict[str, Any] = {"read_key": item_key or "", "index_state": "unknown"}
-    if item_type == "attachment" and item_key:
-        fulltext["candidate_attachment_key"] = item_key
+    candidate_key = item_key if item_type == "attachment" else _enclosure_key(item)
+    if candidate_key:
+        fulltext["candidate_attachment_key"] = candidate_key
     result: dict[str, Any] = {
         "key": item_key,
         "version": item.get("version") if isinstance(item.get("version"), int) else None,

@@ -12,9 +12,11 @@
 | `metadata` | `key`、`version`、`item_type`、`parent_key` 和完整语义 `data`，不带顶层 `library`/`links` | `get_item_metadata`、`get_notes`、`get_annotations` |
 | `raw` | Zotero 原生记录的深拷贝，不删字段 | 所有支持 `view` 的工具均可显式请求 |
 
-`summary` 不截断标题，不删除条目，也不改变原生顺序。`fulltext.index_state` 固定为 `unknown`，因为附件存在或 MIME 类型不能证明 Zotero 索引已经可读。`fulltext.read_key` 是可直接传给全文工具的 key；对原生命中附件还会提供 `candidate_attachment_key`。
+`summary` 不截断标题，不删除条目，也不改变原生顺序。`fulltext.index_state` 固定为 `unknown`，因为附件存在或 MIME 类型不能证明 Zotero 索引已经可读。`fulltext.read_key` 是可直接传给全文工具的 key；附件自身或 `links.enclosure.href` 中解析出合法 Zotero key 时提供 `candidate_attachment_key`，但不会据此宣称索引可读。
 
 `metadata.data` 保留摘要、作者、标签、集合及条目类型特有的语义字段。它不是可直接写回的 payload；更新仍使用变化字段补丁和本地 `version`。
+
+MCP 结构化输出模型只序列化业务结果实际设置的字段（`model_fields_set`），因此 `view="raw"` 的单条 `structuredContent` 与原生对象一致，raw 列表的 `structuredContent["items"]` 与原生列表一致，不会因 schema 默认值新增 `null` 字段；summary/metadata 仍只输出投影明确设置的字段。
 
 ## 搜索与附件
 
@@ -58,3 +60,21 @@ json.dumps(value, ensure_ascii=False, indent=2)
 | `summary` | 3 | 1226 |
 
 该数字证明固定 fixture 下投影体积变化，同时确认完整标题、独立 PDF、数量和顺序都保留。它不是用户提供 JSONL 的回放结果，也不是 tokenizer 的 token 测量。
+
+`tests/test_read_workflow.py::test_deterministic_read_workflow_and_envelope_sizes` 还执行一个固定 mock MCP 流程：recent summary → 使用 `fulltext.read_key` 读取并选择附件 → 使用返回的 `attachment_key` 与 `text_revision` 续读，再断言正文拼接顺序。该流程的业务 page 测量公式为：
+
+```python
+len(json.dumps(recent.structuredContent, ensure_ascii=False, separators=(",", ":")))
+```
+
+固定 fixture 的业务 page 为 `302` 字符。模拟 MCP envelope 包含 `content`（工具文本块）、`structuredContent` 和 `isError`，测量公式为：
+
+```python
+len(json.dumps({
+    "content": [{"type": block.type, "text": block.text} for block in recent.content],
+    "structuredContent": recent.structuredContent,
+    "isError": recent.isError,
+}, ensure_ascii=False, separators=(",", ":")))
+```
+
+该 envelope 为 `724` 字符。两者都是确定性 mock 业务数据的 JSON 字符数，不是用户 JSONL 回放、真实 LLM Agent 任务成功率或 tokenizer token 数。
