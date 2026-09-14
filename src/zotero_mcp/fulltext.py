@@ -6,6 +6,7 @@ import hashlib
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from zotero_mcp.errors import LibraryError
 from zotero_mcp.fulltext_models import (
     FulltextCandidate,
     FulltextChunk,
@@ -16,21 +17,10 @@ from zotero_mcp.fulltext_models import (
 )
 
 
-class FulltextError(ValueError):
-    """A fulltext failure with fields suitable for the shared library error mapper."""
+class FulltextError(LibraryError):
+    """A fulltext failure retaining its historical class name and fields."""
 
-    def __init__(
-        self,
-        code: str,
-        message: str,
-        retryable: bool = False,
-        details: Any = None,
-    ) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
-        self.retryable = retryable
-        self.details = details
+    pass
 
 
 def text_revision(content: str) -> str:

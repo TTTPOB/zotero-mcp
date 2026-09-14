@@ -88,11 +88,13 @@ def no_index_error(message: str = "No indexed attachment text is available.") ->
 
 
 def _unwrap(exc: BaseException) -> BaseException:
-    """Find the original exception hidden by a framework wrapper."""
+    """Find a framework-wrapped error without crossing typed library failures."""
     current = exc
     seen: set[int] = set()
     while id(current) not in seen:
         seen.add(id(current))
+        if isinstance(current, (LibraryError, PyZoteroError)):
+            return current
         cause = current.__cause__ or current.__context__
         if cause is None:
             break
