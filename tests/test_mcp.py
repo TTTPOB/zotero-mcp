@@ -13,7 +13,7 @@ async def test_protocol_discovery_read_write_and_shutdown(library, zot):
     ) as session:
         listing = await session.list_tools()
         tools = {tool.name: tool for tool in listing.tools}
-        assert len(tools) == 22
+        assert len(tools) == len(READ_TOOLS) + len(WRITE_TOOLS)
         assert set(tools) == {f"zotero_{name}" for name in READ_TOOLS + WRITE_TOOLS}
         assert all("semantic" not in name for name in tools)
         assert tools["zotero_delete_item"].annotations.destructiveHint

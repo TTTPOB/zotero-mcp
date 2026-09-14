@@ -18,6 +18,7 @@ READ_TOOLS = (
     "get_notes",
     "get_annotations",
     "get_item_fulltext",
+    "find_item_fulltext",
     "get_item_schema",
     "export_items",
 )

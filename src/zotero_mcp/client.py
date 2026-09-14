@@ -23,11 +23,12 @@ from zotero_mcp.config import Settings, load_auth
 from zotero_mcp.fulltext import (
     FulltextError,
     make_chunk,
+    make_find_result,
     parse_fulltext_response,
     select_attachment,
     text_revision,
 )
-from zotero_mcp.fulltext_models import FulltextChunk
+from zotero_mcp.fulltext_models import FulltextChunk, FulltextFindResult
 from zotero_mcp.presentation import ReadView, normalize_view, project_items
 
 
@@ -519,6 +520,39 @@ class Library:
             content=content,
             offset=offset,
             max_characters=max_characters,
+        )
+
+    @operation()
+    def find_item_fulltext(
+        self,
+        attachment_key: str,
+        query: str,
+        context_characters: int = 120,
+        max_matches: int = 20,
+        text_revision: str | None = None,
+    ) -> FulltextFindResult:
+        """Find literal, case-insensitive text in one explicitly named attachment.
+
+        Match and snippet positions are zero-based Unicode code points in the
+        unmodified Zotero index text. This does not search parent items or the
+        whole library, and does not use regular expressions.
+        """
+        attachment_key = key(attachment_key)
+        if not isinstance(query, str) or not query.strip():
+            raise ValueError("query must contain non-whitespace text.")
+        if type(context_characters) is not int or not 0 <= context_characters <= 5000:
+            raise ValueError("context_characters must be between 0 and 5000.")
+        if type(max_matches) is not int or not 1 <= max_matches <= 100:
+            raise ValueError("max_matches must be between 1 and 100.")
+        content, response = self._read_indexed_attachment(attachment_key)
+        self._check_text_revision(content, text_revision, attachment_key=attachment_key)
+        return make_find_result(
+            attachment_key=attachment_key,
+            response=response,
+            content=content,
+            query=query,
+            context_characters=context_characters,
+            max_matches=max_matches,
         )
 
     @operation()

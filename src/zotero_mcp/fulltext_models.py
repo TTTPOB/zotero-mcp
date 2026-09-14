@@ -43,3 +43,28 @@ class FulltextChunk(TypedDict):
     index: dict[str, Any]
     index_coverage: IndexCoverage
     reading_coverage: ReadingCoverage
+
+
+class FulltextMatch(TypedDict):
+    """One literal, case-insensitive match and its surrounding text."""
+
+    start: int
+    end: int
+    snippet: str
+    snippet_start: int
+    snippet_end: int
+
+
+class FulltextFindResult(TypedDict):
+    """Matches found in one explicitly selected attachment."""
+
+    attachment_key: str
+    query: str
+    match_count: int
+    matches: list[FulltextMatch]
+    text_revision: str
+    total_characters: int
+    offset_unit: str
+    offset_base: int
+    index: dict[str, Any]
+    index_coverage: IndexCoverage

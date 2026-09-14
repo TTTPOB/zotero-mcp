@@ -9,6 +9,8 @@ from typing import Any
 from zotero_mcp.fulltext_models import (
     FulltextCandidate,
     FulltextChunk,
+    FulltextFindResult,
+    FulltextMatch,
     IndexCoverage,
     ReadingCoverage,
 )
@@ -156,4 +158,73 @@ def make_chunk(
         "index": index,
         "index_coverage": index_coverage,
         "reading_coverage": reading_coverage,
+    }
+
+
+def _fold_with_positions(content: str) -> tuple[str, list[int]]:
+    folded: list[str] = []
+    positions: list[int] = []
+    for position, character in enumerate(content):
+        folded_character = character.casefold()
+        folded.append(folded_character)
+        positions.extend([position] * len(folded_character))
+    return "".join(folded), positions
+
+
+def find_matches(
+    content: str, query: str, context_characters: int, max_matches: int
+) -> list[FulltextMatch]:
+    """Find literal case-insensitive matches and map folded positions to source code points."""
+    folded_content, positions = _fold_with_positions(content)
+    folded_query = query.casefold()
+    matches: list[FulltextMatch] = []
+    cursor = 0
+    while len(matches) < max_matches:
+        folded_start = folded_content.find(folded_query, cursor)
+        if folded_start < 0:
+            break
+        folded_end = folded_start + len(folded_query)
+        if not positions or folded_end > len(positions):
+            break
+        start = positions[folded_start]
+        end = positions[folded_end - 1] + 1
+        snippet_start = max(0, start - context_characters)
+        snippet_end = min(len(content), end + context_characters)
+        matches.append(
+            {
+                "start": start,
+                "end": end,
+                "snippet": content[snippet_start:snippet_end],
+                "snippet_start": snippet_start,
+                "snippet_end": snippet_end,
+            }
+        )
+        # Advance one folded code point so overlapping literal matches are retained.
+        cursor = folded_start + 1
+    return matches
+
+
+def make_find_result(
+    *,
+    attachment_key: str,
+    response: Mapping[str, Any],
+    content: str,
+    query: str,
+    context_characters: int,
+    max_matches: int,
+) -> FulltextFindResult:
+    matches = find_matches(content, query, context_characters, max_matches)
+    index = {key: value for key, value in response.items() if key != "content"}
+    index_coverage, _ = coverage(response, start=0, end=0, total=len(content))
+    return {
+        "attachment_key": attachment_key,
+        "query": query,
+        "match_count": len(matches),
+        "matches": matches,
+        "text_revision": text_revision(content),
+        "total_characters": len(content),
+        "offset_unit": "unicode_code_point",
+        "offset_base": 0,
+        "index": index,
+        "index_coverage": index_coverage,
     }
