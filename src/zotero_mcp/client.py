@@ -9,6 +9,7 @@ from collections.abc import Callable, Mapping
 from functools import wraps
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import parse_qs, urlparse
 
 from pyzotero import (
     LocalAPIKeyRequiredError,
@@ -55,6 +56,56 @@ def pagination(limit: int, offset: int) -> dict[str, Any]:
     return {"limit": limit, "start": offset}
 
 
+def _header(headers: Mapping[str, Any] | None, name: str) -> Any:
+    if headers is None:
+        return None
+    value = headers.get(name)
+    if value is not None:
+        return value
+    lowered = name.lower()
+    for key_name, value in headers.items():
+        if str(key_name).lower() == lowered:
+            return value
+    return None
+
+
+def _total_results(headers: Mapping[str, Any] | None) -> int | None:
+    value = _header(headers, "Total-Results")
+    try:
+        total = int(value)
+    except (TypeError, ValueError):
+        return None
+    return total if total >= 0 else None
+
+
+def _next_link(links: Mapping[str, Any] | None, headers: Mapping[str, Any] | None) -> str | None:
+    if isinstance(links, Mapping):
+        value = links.get("next")
+        if isinstance(value, Mapping):
+            value = value.get("url")
+        if isinstance(value, str):
+            return value
+    link_header = _header(headers, "Link")
+    if not isinstance(link_header, str):
+        return None
+    for entry in link_header.split(","):
+        if 'rel="next"' not in entry and "rel=next" not in entry:
+            continue
+        if entry.lstrip().startswith("<") and ">" in entry:
+            return entry.lstrip()[1 : entry.index(">")]
+    return None
+
+
+def _next_offset_from_link(link: str | None) -> int | None:
+    if not link:
+        return None
+    try:
+        values = parse_qs(urlparse(link).query).get("start", [])
+        return int(values[0]) if values and int(values[0]) >= 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
 def page(
     items: list,
     limit: int,
@@ -62,19 +113,34 @@ def page(
     *,
     view: ReadView = "raw",
     consumed_count: int | None = None,
+    links: Mapping[str, Any] | None = None,
+    headers: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build a projected page using a bounded native-count fallback."""
+    """Build a projected page using native response pagination when available."""
     normalize_view(view)
     projected = project_items(items, view)
     upstream_count = len(items) if consumed_count is None else consumed_count
     if type(upstream_count) is not int or upstream_count < 0:
         raise ValueError("consumed_count must be a nonnegative integer.")
-    # A full last page can require one final empty request; no unbounded scan.
-    return {
+
+    total = _total_results(headers)
+    next_link = _next_link(links, headers)
+    next_offset = _next_offset_from_link(next_link)
+    if next_offset is None and total is not None:
+        next_offset = offset + upstream_count if offset + upstream_count < total else None
+    if next_offset is None and total is None:
+        # A full last page can require one final empty request when no response
+        # pagination metadata is available. This remains a bounded fallback.
+        next_offset = offset + upstream_count if upstream_count == limit else None
+
+    result: dict[str, Any] = {
         "items": projected,
         "offset": offset,
-        "next_offset": offset + upstream_count if upstream_count == limit else None,
+        "next_offset": next_offset,
     }
+    if total is not None:
+        result["total"] = total
+    return result
 
 
 def _item_tags(item: Mapping[str, Any] | None) -> set[str]:
@@ -196,12 +262,15 @@ class Library:
         consumed_count: int | None = None,
     ) -> dict[str, Any]:
         normalize_view(view)
+        request = getattr(self.zot, "request", None)
         return page(
             items,
             limit,
             offset,
             view=view,
             consumed_count=consumed_count,
+            links=getattr(self.zot, "links", None),
+            headers=getattr(request, "headers", None),
         )
 
     @operation()
