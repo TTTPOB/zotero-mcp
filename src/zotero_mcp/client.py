@@ -23,16 +23,24 @@ from zotero_mcp.fulltext import (
     select_attachment,
     text_revision,
 )
-from zotero_mcp.fulltext_models import FulltextChunk, FulltextFindResult
+from zotero_mcp.fulltext_models import (
+    FulltextAttachmentKey,
+    FulltextChunk,
+    FulltextContextCharacters,
+    FulltextFindResult,
+    FulltextItemKey,
+    FulltextMaxCharacters,
+    FulltextMaxMatches,
+    FulltextOffset,
+    FulltextQuery,
+    FulltextRevision,
+)
 from zotero_mcp.models import ItemDataList, ItemKey, ItemKeyList, Version, WriteResponse
 from zotero_mcp.presentation import (
     ItemMetadata,
     ItemPage,
-    ReadContextCharacters,
     ReadItemKey,
     ReadLimit,
-    ReadMaxCharacters,
-    ReadMaxMatches,
     ReadOffset,
     ReadTag,
     ReadView,
@@ -641,11 +649,11 @@ class Library:
     @operation()
     def get_item_fulltext(
         self,
-        item_key: ReadItemKey,
-        offset: ReadOffset = 0,
-        max_characters: ReadMaxCharacters = 20000,
-        attachment_key: ReadItemKey | None = None,
-        text_revision: str | None = None,
+        item_key: FulltextItemKey,
+        offset: FulltextOffset = 0,
+        max_characters: FulltextMaxCharacters = 20000,
+        attachment_key: FulltextAttachmentKey | None = None,
+        text_revision: FulltextRevision = None,
     ) -> FulltextChunk:
         """Read Zotero-indexed text from one stable attachment.
 
@@ -684,11 +692,11 @@ class Library:
     @operation()
     def find_item_fulltext(
         self,
-        attachment_key: ReadItemKey,
-        query: str,
-        context_characters: ReadContextCharacters = 120,
-        max_matches: ReadMaxMatches = 20,
-        text_revision: str | None = None,
+        attachment_key: FulltextAttachmentKey,
+        query: FulltextQuery,
+        context_characters: FulltextContextCharacters = 120,
+        max_matches: FulltextMaxMatches = 20,
+        text_revision: FulltextRevision = None,
     ) -> FulltextFindResult:
         """Find literal, case-insensitive text in one explicitly named attachment.
 

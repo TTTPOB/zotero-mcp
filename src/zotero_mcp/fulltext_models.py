@@ -1,6 +1,20 @@
 """Typed views for Zotero-indexed fulltext reads."""
 
-from typing import Any, TypedDict
+from typing import Annotated, Any
+
+from pydantic import Field
+from typing_extensions import TypedDict
+
+FulltextItemKey = Annotated[str, Field(min_length=8, max_length=8, pattern=r"^[A-Za-z0-9]{8}$")]
+FulltextAttachmentKey = Annotated[
+    str, Field(min_length=8, max_length=8, pattern=r"^[A-Za-z0-9]{8}$")
+]
+FulltextOffset = Annotated[int, Field(ge=0)]
+FulltextMaxCharacters = Annotated[int, Field(ge=1, le=50000)]
+FulltextContextCharacters = Annotated[int, Field(ge=0, le=5000)]
+FulltextMaxMatches = Annotated[int, Field(ge=1, le=100)]
+FulltextQuery = Annotated[str, Field(min_length=1)]
+FulltextRevision = Annotated[str | None, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
 
 
 class FulltextCandidate(TypedDict):
