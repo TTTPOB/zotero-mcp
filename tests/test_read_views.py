@@ -74,6 +74,22 @@ def test_summary_extracts_enclosure_candidate_without_claiming_index():
     assert "match" not in summary
 
 
+@pytest.mark.parametrize(
+    "href,expected",
+    [
+        ("http://localhost:23119/api/users/0/items/PDF00001/file/download", "PDF00001"),
+        ("http://localhost:23119/api/users/0/attachments/paperpdf", None),
+    ],
+)
+def test_enclosure_candidate_requires_explicit_item_path(href, expected):
+    item = _native_item("PAPER001", title="Parent")
+    item["links"]["enclosure"] = {"href": href}
+
+    summary = project_items([item], "summary")[0]
+
+    assert summary["fulltext"].get("candidate_attachment_key") == expected
+
+
 def test_metadata_is_semantic_and_raw_is_unchanged(library, zot):
     native = _native_item("PAPER001", abstract="Long abstract")
     zot.item.side_effect = None

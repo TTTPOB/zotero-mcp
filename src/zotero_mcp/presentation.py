@@ -58,14 +58,6 @@ class FulltextEntry(_FieldsSetModel):
     index_state: Literal["unknown"] | None = None
 
 
-class MatchDetails(_FieldsSetModel):
-    """Optional native match relation, never a guessed field or score."""
-
-    kind: Literal["native"] | None = None
-    matched_attachment_key: str | None = None
-    parent_key: str | None = None
-
-
 class ItemSummary(_FieldsSetModel):
     """Stable discovery fields shared by search and list views."""
 
@@ -79,7 +71,6 @@ class ItemSummary(_FieldsSetModel):
     parent_key: str | None = None
     matched_attachment_key: str | None = None
     match_details_available: bool | None = None
-    match: MatchDetails | None = None
     fulltext: FulltextEntry | None = None
 
 
@@ -104,7 +95,7 @@ class ItemPage(_FieldsSetModel):
 
 _VALID_VIEWS = {"summary", "metadata", "raw"}
 _YEAR_RE = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
-_KEY_RE = re.compile(r"(?<![A-Za-z0-9])([A-Za-z0-9]{8})(?![A-Za-z0-9])")
+_ENCLOSURE_KEY_RE = re.compile(r"/items/([A-Za-z0-9]{8})(?:/|$)")
 
 
 def normalize_view(view: str) -> ReadView:
@@ -130,7 +121,7 @@ def _enclosure_key(item: Mapping[str, Any]) -> str | None:
     if not isinstance(href, str):
         return None
     path = urlparse(href).path
-    matches = _KEY_RE.findall(path)
+    matches = _ENCLOSURE_KEY_RE.findall(path)
     return matches[-1].upper() if matches else None
 
 
