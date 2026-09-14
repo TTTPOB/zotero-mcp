@@ -923,9 +923,11 @@ class Library:
             "updated": [],
             "unchanged": [],
             "failed": {},
+            "unknown": {},
             "pending": [],
         }
         for position, (input_index, item_key) in enumerate(indexed_keys):
+            write_started = False
             try:
                 item = self.zot.item(item_key)
                 original = item["data"].get(field, [])
@@ -936,6 +938,7 @@ class Library:
                         {"input_index": input_index, "key": item_key, "status": "unchanged"}
                     )
                     continue
+                write_started = True
                 self.update_item(item_key, item["version"], {field: updated})
                 result["updated"].append(item_key)
                 result["results"].append(
@@ -943,16 +946,22 @@ class Library:
                 )
             except Exception as exc:
                 # Keep completed work visible; never silently replay a partial batch.
-                error = from_exception(exc, write=True, operation=f"batch_{field}")
+                error = from_exception(
+                    exc,
+                    write=write_started,
+                    operation=f"batch_{field}",
+                )
+                payload = error.as_dict()["error"]
                 result["ok"] = False
-                result["status"] = "partial"
-                result["failed"][item_key] = error.as_dict()["error"]
+                status = "unknown" if error.code == "UNKNOWN_WRITE_RESULT" else "failed"
+                result["status"] = status if status == "unknown" else "partial"
+                result["unknown" if status == "unknown" else "failed"][item_key] = payload
                 result["results"].append(
                     {
                         "input_index": input_index,
                         "key": item_key,
-                        "status": "failed",
-                        "error": error.as_dict()["error"],
+                        "status": status,
+                        "error": payload,
                     }
                 )
                 for pending_index, pending_key in indexed_keys[position + 1 :]:
@@ -1092,8 +1101,8 @@ class Library:
                         "error": payload,
                     }
                 ],
-                "error": f"Attachment created but upload failed: {exc}. Inspect it before retrying.",
-                "error_details": payload,
+                "error": payload,
+                "error_message": f"Attachment created but upload failed: {exc}. Inspect it before retrying.",
             }
 
         # Pyzotero returns three lists here, distinct from create_items' indexed maps.

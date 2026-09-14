@@ -82,6 +82,42 @@ async def test_protocol_add_missing_batch_result_is_unknown_but_keeps_success(li
     assert json.loads(result.content[0].text) == result.structuredContent
 
 
+def test_interrupted_batch_marks_only_current_item_unknown(library, zot):
+    zot.update_item.side_effect = [True, ConnectionError("dropped")]
+    result = library.batch_update_tags(
+        ["ABCD1234", "SECOND02", "THIRD003"], add=["new"]
+    )
+    assert result["status"] == "unknown"
+    assert [entry["status"] for entry in result["results"]] == [
+        "success",
+        "unknown",
+        "pending",
+    ]
+    assert result["unknown"]["SECOND02"]["code"] == "UNKNOWN_WRITE_RESULT"
+    assert result["pending"] == ["THIRD003"]
+
+
+async def test_protocol_interrupted_batch_is_error_with_completed_entries(library, zot):
+    zot.update_item.side_effect = [True, ConnectionError("dropped")]
+    async with create_connected_server_and_client_session(
+        build_server(library), read_timeout_seconds=timedelta(seconds=10)
+    ) as session:
+        result = await session.call_tool(
+            "zotero_batch_update_tags",
+            {"item_keys": ["ABCD1234", "SECOND02", "THIRD003"], "add": ["new"]},
+        )
+    assert result.isError is True
+    assert result.structuredContent["status"] == "unknown"
+    assert [entry["status"] for entry in result.structuredContent["results"]] == [
+        "success",
+        "unknown",
+        "pending",
+    ]
+    assert result.structuredContent["unknown"]["SECOND02"]["code"] == "UNKNOWN_WRITE_RESULT"
+    assert result.structuredContent["pending"] == ["THIRD003"]
+    assert json.loads(result.content[0].text) == result.structuredContent
+
+
 async def test_protocol_write_connection_is_unknown_and_not_retryable(library, zot):
     zot.update_item.side_effect = ConnectionError("dropped")
     async with create_connected_server_and_client_session(
@@ -119,5 +155,6 @@ def test_attachment_upload_disconnect_keeps_key_and_unknown_details(library, zot
     assert result["status"] == "unknown"
     assert result["attachment_key"] == "NEW00001"
     assert result["stage"] == "upload"
-    assert result["error_details"]["code"] == "UNKNOWN_WRITE_RESULT"
-    assert result["error_details"]["retryable"] is False
+    assert result["error"]["code"] == "UNKNOWN_WRITE_RESULT"
+    assert result["error"]["retryable"] is False
+    assert "Inspect" in result["error_message"]

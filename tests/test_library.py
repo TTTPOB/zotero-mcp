@@ -263,7 +263,8 @@ def test_attachment_upload_failure_keeps_created_key(library, zot, tmp_path):
     result = library.attach_file("ABCD1234", str(path))
     assert result["ok"] is False
     assert result["attachment_key"] == "NEW00001"
-    assert "Inspect" in result["error"]
+    assert result["error"]["code"] == "UNKNOWN_WRITE_RESULT"
+    assert "Inspect" in result["error_message"]
     assert zot.create_items.call_args.args[0][0]["filename"] == "中文.pdf"
 
 
