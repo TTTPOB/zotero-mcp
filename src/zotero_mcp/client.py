@@ -111,8 +111,9 @@ def _next_link(links: Mapping[str, Any] | None, headers: Mapping[str, Any] | Non
     for entry in link_header.split(","):
         if 'rel="next"' not in entry and "rel=next" not in entry:
             continue
-        if entry.lstrip().startswith("<") and ">" in entry:
-            return entry.lstrip()[1 : entry.index(">")]
+        stripped = entry.strip()
+        if stripped.startswith("<") and ">" in stripped:
+            return stripped[1 : stripped.index(">")]
     return None
 
 
@@ -148,7 +149,8 @@ def page(
     next_link = _next_link(links, headers)
     next_offset = _next_offset_from_link(next_link)
     if next_offset is None and total is not None:
-        next_offset = offset + upstream_count if offset + upstream_count < total else None
+        candidate = offset + upstream_count
+        next_offset = candidate if upstream_count > 0 and candidate < total else None
     if next_offset is None and total is None:
         # A full last page can require one final empty request when no response
         # pagination metadata is available. This remains a bounded fallback.
@@ -512,6 +514,13 @@ class Library:
         if tags and tag_scope == "matched_item":
             params["tag"] = tags
         native_items = self.zot.items(**params)
+        search_links = dict(self.zot.links) if isinstance(self.zot.links, Mapping) else None
+        search_request = getattr(self.zot, "request", None)
+        search_headers = (
+            dict(search_request.headers)
+            if isinstance(getattr(search_request, "headers", None), Mapping)
+            else None
+        )
         filtered_items = native_items
         if tags and tag_scope != "matched_item":
             filtered_items = []
@@ -531,12 +540,14 @@ class Library:
                     tag_scope == "either" and (item_match or parent_match)
                 ):
                     filtered_items.append(item)
-        return self._page(
+        return page(
             filtered_items,
             limit,
             offset,
             view=view,
             consumed_count=len(native_items),
+            links=search_links,
+            headers=search_headers,
             search=True,
         )
 

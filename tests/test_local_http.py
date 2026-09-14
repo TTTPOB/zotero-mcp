@@ -20,8 +20,11 @@ def wire():
         assert request.url.host == "localhost"
         assert request.url.port == 23119
         assert str(request.url.path).startswith("/api/")
-        status, body = responses.pop(0)
+        response = responses.pop(0)
+        status, body = response[:2]
         headers = {"Zotero-Server-ID": "server-1", "Last-Modified-Version": "8"}
+        if len(response) > 2:
+            headers.update(response[2])
         if isinstance(body, str):
             return http.Response(status, text=body, headers=headers)
         return http.Response(status, json=body, headers=headers)
@@ -114,6 +117,72 @@ def test_search_then_metadata_does_not_leak_query(wire):
     assert calls[0].url.params["start"] == "6"
     assert "q" not in calls[1].url.params
     assert "tag" not in calls[1].url.params
+
+
+def test_parent_tag_search_preserves_search_pagination_headers(wire):
+    library, calls, responses = wire
+    attachment = {
+        "key": "ATTACH01",
+        "version": 3,
+        "data": {"itemType": "attachment", "parentItem": "PARENT01", "title": "paper.pdf"},
+    }
+    parent = {
+        "key": "PARENT01",
+        "version": 4,
+        "data": {"itemType": "journalArticle", "title": "Parent", "tags": [{"tag": "review"}]},
+    }
+    responses.extend(
+        [
+            (
+                200,
+                [attachment],
+                {
+                    "Total-Results": "4",
+                    "Link": '<http://localhost:23119/api/users/0/items?start=3&limit=1>; rel="next"',
+                },
+            ),
+            (200, parent, {"Total-Results": "1"}),
+        ]
+    )
+
+    result = library.search_items(
+        "needle", tags=["review"], qmode="everything", tag_scope="parent", limit=1
+    )
+
+    assert result["total"] == 4
+    assert result["next_offset"] == 3
+    assert len(result["items"]) == 1
+    assert calls[0].url.path == "/api/users/0/items"
+    assert "tag" not in calls[0].url.params
+    assert calls[1].url.path == "/api/users/0/items/PARENT01"
+
+
+def test_parent_response_without_pagination_headers_keeps_search_total(wire):
+    library, calls, responses = wire
+    attachment = {
+        "key": "ATTACH01",
+        "version": 3,
+        "data": {"itemType": "attachment", "parentItem": "PARENT01", "title": "paper.pdf"},
+    }
+    parent = {
+        "key": "PARENT01",
+        "version": 4,
+        "data": {"itemType": "journalArticle", "title": "Parent", "tags": [{"tag": "review"}]},
+    }
+    responses.extend(
+        [
+            (200, [attachment], {"Total-Results": "2"}),
+            (200, parent),
+        ]
+    )
+
+    result = library.search_items(
+        "needle", tags=["review"], qmode="everything", tag_scope="parent", limit=1
+    )
+
+    assert result["total"] == 2
+    assert result["next_offset"] == 1
+    assert len(calls) == 2
 
 
 def test_read_does_not_send_local_write_key(wire):

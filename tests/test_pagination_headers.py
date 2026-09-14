@@ -1,6 +1,8 @@
 import copy
 from types import SimpleNamespace
 
+from zotero_mcp.client import page
+
 
 def _item(item_key: str = "PAPER001") -> dict:
     return {
@@ -35,6 +37,24 @@ def test_pyzotero_next_link_wins_over_length_fallback(library, zot):
 
     assert result["total"] == 9
     assert result["next_offset"] == 7
+
+
+def test_empty_page_with_total_does_not_repeat_same_offset():
+    result = page([], limit=25, offset=0, headers={"Total-Results": "5"})
+
+    assert result["total"] == 5
+    assert result["next_offset"] is None
+
+
+def test_link_header_leading_space_keeps_complete_start_value():
+    result = page(
+        [_item()],
+        limit=1,
+        offset=0,
+        headers={"Link": ' <http://localhost/items?start=4&limit=1>; rel="next"'},
+    )
+
+    assert result["next_offset"] == 4
 
 
 def test_http_link_header_is_used_when_links_are_unavailable(library, zot):
