@@ -1,54 +1,84 @@
-"""Stable task views for Zotero read results."""
+"""Stable task views and schemas for Zotero read results."""
 
 from __future__ import annotations
 
 import copy
 import re
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal, TypedDict
+from typing import Annotated, Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 ReadView = Literal["summary", "metadata", "raw"]
+ReadItemKey = Annotated[str, Field(min_length=8, max_length=8, pattern=r"^[A-Za-z0-9]{8}$")]
+ReadLimit = Annotated[int, Field(ge=1, le=100)]
+ReadOffset = Annotated[int, Field(ge=0)]
+ReadMaxCharacters = Annotated[int, Field(ge=1, le=50000)]
+ReadContextCharacters = Annotated[int, Field(ge=0, le=5000)]
+ReadMaxMatches = Annotated[int, Field(ge=1, le=100)]
+ReadTag = Annotated[str, Field(min_length=1)]
 
 
-class FulltextEntry(TypedDict, total=False):
-    read_key: str
-    candidate_attachment_key: str
-    index_state: Literal["unknown"]
+class FulltextEntry(BaseModel):
+    """A lightweight route to Zotero's fulltext reader."""
+
+    model_config = ConfigDict(extra="allow")
+
+    read_key: str | None = None
+    candidate_attachment_key: str | None = None
+    index_state: Literal["unknown"] | None = None
 
 
-class MatchDetails(TypedDict):
-    kind: Literal["native"]
-    matched_attachment_key: str | None
-    parent_key: str | None
+class MatchDetails(BaseModel):
+    """Optional native match relation, never a guessed field or score."""
+
+    model_config = ConfigDict(extra="allow")
+
+    kind: Literal["native"] | None = None
+    matched_attachment_key: str | None = None
+    parent_key: str | None = None
 
 
-class ItemSummary(TypedDict):
-    key: str | None
-    version: int | None
-    item_type: str | None
-    title: str
-    year: int | None
-    creator_summary: str
-    doi: str | None
-    parent_key: str | None
-    matched_attachment_key: str | None
-    match: MatchDetails
-    fulltext: FulltextEntry
+class ItemSummary(BaseModel):
+    """Stable discovery fields shared by search and list views."""
+
+    model_config = ConfigDict(extra="allow")
+
+    key: str | None = None
+    version: int | None = None
+    item_type: str | None = None
+    title: str | None = None
+    year: int | None = None
+    creator_summary: str | None = None
+    doi: str | None = None
+    parent_key: str | None = None
+    matched_attachment_key: str | None = None
+    match_details_available: bool | None = None
+    match: MatchDetails | None = None
+    fulltext: FulltextEntry | None = None
 
 
-class ItemMetadata(TypedDict):
-    key: str | None
-    version: int | None
-    item_type: str | None
-    parent_key: str | None
-    data: dict[str, Any]
+class ItemMetadata(BaseModel):
+    """Semantic item metadata while allowing an explicit raw escape hatch."""
+
+    model_config = ConfigDict(extra="allow")
+
+    key: str | None = None
+    version: int | None = None
+    item_type: str | None = None
+    parent_key: str | None = None
+    data: dict[str, Any] | None = None
 
 
-class ItemPage(TypedDict, total=False):
-    items: list[dict[str, Any]]
-    offset: int
-    next_offset: int | None
-    total: int
+class ItemPage(BaseModel):
+    """A paged list whose item union preserves summary, metadata, and raw views."""
+
+    model_config = ConfigDict(extra="allow")
+
+    items: list[dict[str, Any] | ItemSummary | ItemMetadata] = Field(default_factory=list)
+    offset: int = 0
+    next_offset: int | None = None
+    total: int | None = None
 
 
 _VALID_VIEWS = {"summary", "metadata", "raw"}
@@ -111,29 +141,20 @@ def _doi(data: Mapping[str, Any]) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _summary(item: Mapping[str, Any]) -> ItemSummary:
+def _summary(item: Mapping[str, Any], *, search: bool) -> dict[str, Any]:
     data = _data(item)
     item_key = item.get("key")
     item_key = item_key if isinstance(item_key, str) else None
     item_type = data.get("itemType")
     item_type = item_type if isinstance(item_type, str) else None
     parent_key = _parent_key(data)
-    matched_attachment_key = item_key if item_type == "attachment" else None
     title = data.get("title")
     if not isinstance(title, str):
         title = data.get("filename") if isinstance(data.get("filename"), str) else ""
-    match: MatchDetails = {
-        "kind": "native",
-        "matched_attachment_key": matched_attachment_key,
-        "parent_key": parent_key,
-    }
-    fulltext: FulltextEntry = {
-        "read_key": item_key or "",
-        "index_state": "unknown",
-    }
-    if matched_attachment_key:
-        fulltext["candidate_attachment_key"] = matched_attachment_key
-    return {
+    fulltext: dict[str, Any] = {"read_key": item_key or "", "index_state": "unknown"}
+    if item_type == "attachment" and item_key:
+        fulltext["candidate_attachment_key"] = item_key
+    result: dict[str, Any] = {
         "key": item_key,
         "version": item.get("version") if isinstance(item.get("version"), int) else None,
         "item_type": item_type,
@@ -142,13 +163,17 @@ def _summary(item: Mapping[str, Any]) -> ItemSummary:
         "creator_summary": _creator_summary(data),
         "doi": _doi(data),
         "parent_key": parent_key,
-        "matched_attachment_key": matched_attachment_key,
-        "match": match,
         "fulltext": fulltext,
     }
+    if search:
+        result.update(
+            matched_attachment_key=item_key if item_type == "attachment" else None,
+            match_details_available=False,
+        )
+    return result
 
 
-def _metadata(item: Mapping[str, Any]) -> ItemMetadata:
+def _metadata(item: Mapping[str, Any]) -> dict[str, Any]:
     data = copy.deepcopy(dict(_data(item)))
     item_type = data.get("itemType")
     item_type = item_type if isinstance(item_type, str) else None
@@ -161,16 +186,20 @@ def _metadata(item: Mapping[str, Any]) -> ItemMetadata:
     }
 
 
-def project_item(item: Mapping[str, Any], view: ReadView = "summary") -> dict[str, Any]:
+def project_item(
+    item: Mapping[str, Any], view: ReadView = "summary", *, search: bool = False
+) -> dict[str, Any]:
     """Project one native Zotero item without mutating the source object."""
     view = normalize_view(view)
     if view == "raw":
         return copy.deepcopy(dict(item))
     if view == "metadata":
-        return dict(_metadata(item))
-    return dict(_summary(item))
+        return _metadata(item)
+    return _summary(item, search=search)
 
 
-def project_items(items: Sequence[Mapping[str, Any]], view: ReadView = "summary") -> list[dict[str, Any]]:
+def project_items(
+    items: Sequence[Mapping[str, Any]], view: ReadView = "summary", *, search: bool = False
+) -> list[dict[str, Any]]:
     """Project items while preserving the upstream order and item count."""
-    return [project_item(item, view) for item in items]
+    return [project_item(item, view, search=search) for item in items]

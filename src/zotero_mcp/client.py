@@ -25,7 +25,22 @@ from zotero_mcp.fulltext import (
 )
 from zotero_mcp.fulltext_models import FulltextChunk, FulltextFindResult
 from zotero_mcp.models import ItemDataList, ItemKey, ItemKeyList, Version, WriteResponse
-from zotero_mcp.presentation import ReadView, normalize_view, project_items
+from zotero_mcp.presentation import (
+    ItemMetadata,
+    ItemPage,
+    ReadContextCharacters,
+    ReadItemKey,
+    ReadLimit,
+    ReadMaxCharacters,
+    ReadMaxMatches,
+    ReadOffset,
+    ReadTag,
+    ReadView,
+    normalize_view,
+    project_items,
+)
+
+QUERY_OR_TAGS_REQUIRED = "QUERY_OR_TAGS_REQUIRED"
 
 
 def new_client(settings: Settings | None = None) -> Zotero:
@@ -120,10 +135,11 @@ def page(
     consumed_count: int | None = None,
     links: Mapping[str, Any] | None = None,
     headers: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
+    search: bool = False,
+) -> ItemPage:
     """Build a projected page using native response pagination when available."""
     normalize_view(view)
-    projected = project_items(items, view)
+    projected = project_items(items, view, search=search)
     upstream_count = len(items) if consumed_count is None else consumed_count
     if type(upstream_count) is not int or upstream_count < 0:
         raise ValueError("consumed_count must be a nonnegative integer.")
@@ -426,7 +442,8 @@ class Library:
         *,
         view: ReadView = "raw",
         consumed_count: int | None = None,
-    ) -> dict[str, Any]:
+        search: bool = False,
+    ) -> ItemPage:
         normalize_view(view)
         request = getattr(self.zot, "request", None)
         return page(
@@ -437,22 +454,24 @@ class Library:
             consumed_count=consumed_count,
             links=getattr(self.zot, "links", None),
             headers=getattr(request, "headers", None),
+            search=search,
         )
 
     @operation()
     def search_items(
         self,
         query: str = "",
-        tags: list[str] | None = None,
+        tags: list[ReadTag] | None = None,
         item_type: str | None = None,
         qmode: Literal["titleCreatorYear", "everything"] = "titleCreatorYear",
-        limit: int = 25,
-        offset: int = 0,
+        limit: ReadLimit = 25,
+        offset: ReadOffset = 0,
         tag_scope: Literal["matched_item", "parent", "either"] = "matched_item",
         view: ReadView = "summary",
-    ) -> dict[str, Any]:
-        """Search metadata, tags or Zotero-indexed text and return native hits.
+    ) -> ItemPage:
+        """Search requires a query or at least one valid tag.
 
+        Return native metadata or attachment hits from Zotero's indexed text.
         ``qmode='everything'`` includes attachment hits by default: no item type
         filter is sent unless ``item_type`` is explicit. Metadata search keeps the
         historical ``-attachment`` default. ``matched_item`` applies tags to the
@@ -467,13 +486,20 @@ class Library:
             raise ValueError("tag_scope must be matched_item, parent, or either.")
         if not isinstance(query, str):
             raise ValueError("query must be a string.")
-        if tags is not None and (
-            not isinstance(tags, list)
-            or any(not isinstance(tag, str) or not tag.strip() for tag in tags)
-        ):
+        valid_tags = (
+            isinstance(tags, list)
+            and bool(tags)
+            and all(isinstance(tag, str) and bool(tag.strip()) for tag in tags)
+        )
+        if not query.strip() and not valid_tags:
+            raise LibraryError(
+                QUERY_OR_TAGS_REQUIRED,
+                "Provide a query or at least one valid tag. To browse recent items, use zotero_get_recent.",
+            )
+        if tags is not None and not isinstance(tags, list):
             raise ValueError("tags must be a list of non-empty strings.")
-        if not query.strip() and not tags:
-            raise ValueError("Provide a query or tags; use zotero_get_recent to browse.")
+        if tags is not None and any(not isinstance(tag, str) or not tag.strip() for tag in tags):
+            raise ValueError("tags must be a list of non-empty strings.")
         if item_type is not None and (not isinstance(item_type, str) or not item_type.strip()):
             raise ValueError("item_type must be a non-empty string when provided.")
 
@@ -511,20 +537,25 @@ class Library:
             offset,
             view=view,
             consumed_count=len(native_items),
+            search=True,
         )
 
     @operation()
     def get_item_metadata(
-        self, item_key: str, view: ReadView = "metadata"
-    ) -> dict[str, Any]:
+        self, item_key: ReadItemKey, view: ReadView = "metadata"
+    ) -> ItemMetadata:
         """Read semantic metadata by default; use ``view='raw'`` for Zotero's object."""
         item = self.zot.item(key(item_key))
         return project_items([item], view)[0]
 
     @operation()
     def get_item_children(
-        self, item_key: str, limit: int = 25, offset: int = 0, view: ReadView = "summary"
-    ) -> dict[str, Any]:
+        self,
+        item_key: ReadItemKey,
+        limit: ReadLimit = 25,
+        offset: ReadOffset = 0,
+        view: ReadView = "summary",
+    ) -> ItemPage:
         """List an item's child attachments, notes or annotations."""
         return self._page(
             self.zot.children(key(item_key), **pagination(limit, offset)),
@@ -534,18 +565,20 @@ class Library:
         )
 
     @operation()
-    def get_collections(self, limit: int = 25, offset: int = 0) -> dict[str, Any]:
+    def get_collections(
+        self, limit: ReadLimit = 25, offset: ReadOffset = 0
+    ) -> ItemPage:
         """List collections with keys, parentCollection and local versions."""
         return self._page(self.zot.collections(**pagination(limit, offset)), limit, offset)
 
     @operation()
     def get_collection_items(
         self,
-        collection_key: str,
-        limit: int = 25,
-        offset: int = 0,
+        collection_key: ReadItemKey,
+        limit: ReadLimit = 25,
+        offset: ReadOffset = 0,
         view: ReadView = "summary",
-    ) -> dict[str, Any]:
+    ) -> ItemPage:
         """List collection items as summaries; request metadata or raw when needed."""
         return self._page(
             self.zot.collection_items(key(collection_key), **pagination(limit, offset)),
@@ -555,14 +588,16 @@ class Library:
         )
 
     @operation()
-    def get_tags(self, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+    def get_tags(
+        self, limit: ReadLimit = 100, offset: ReadOffset = 0
+    ) -> ItemPage:
         """List tags in the configured local library."""
         return self._page(self.zot.tags(**pagination(limit, offset)), limit, offset)
 
     @operation()
     def get_recent(
-        self, limit: int = 25, offset: int = 0, view: ReadView = "summary"
-    ) -> dict[str, Any]:
+        self, limit: ReadLimit = 25, offset: ReadOffset = 0, view: ReadView = "summary"
+    ) -> ItemPage:
         """List all top-level items, including independent attachments, as summaries."""
         return self._page(
             self.zot.top(sort="dateAdded", direction="desc", **pagination(limit, offset)),
@@ -574,11 +609,11 @@ class Library:
     @operation()
     def get_notes(
         self,
-        parent_key: str | None = None,
-        limit: int = 25,
-        offset: int = 0,
+        parent_key: ReadItemKey | None = None,
+        limit: ReadLimit = 25,
+        offset: ReadOffset = 0,
         view: ReadView = "metadata",
-    ) -> dict[str, Any]:
+    ) -> ItemPage:
         """Read notes, optionally restricted to a parent item."""
         params = {**pagination(limit, offset), "itemType": "note"}
         items = (
@@ -589,11 +624,11 @@ class Library:
     @operation()
     def get_annotations(
         self,
-        attachment_key: str,
-        limit: int = 25,
-        offset: int = 0,
+        attachment_key: ReadItemKey,
+        limit: ReadLimit = 25,
+        offset: ReadOffset = 0,
         view: ReadView = "metadata",
-    ) -> dict[str, Any]:
+    ) -> ItemPage:
         """Read Zotero reader annotations belonging to an attachment."""
         items = self.zot.children(
             key(attachment_key), itemType="annotation", **pagination(limit, offset)
@@ -639,10 +674,10 @@ class Library:
     @operation()
     def get_item_fulltext(
         self,
-        item_key: str,
-        offset: int = 0,
-        max_characters: int = 20000,
-        attachment_key: str | None = None,
+        item_key: ReadItemKey,
+        offset: ReadOffset = 0,
+        max_characters: ReadMaxCharacters = 20000,
+        attachment_key: ReadItemKey | None = None,
         text_revision: str | None = None,
     ) -> FulltextChunk:
         """Read Zotero-indexed text from one stable attachment.
@@ -682,10 +717,10 @@ class Library:
     @operation()
     def find_item_fulltext(
         self,
-        attachment_key: str,
+        attachment_key: ReadItemKey,
         query: str,
-        context_characters: int = 120,
-        max_matches: int = 20,
+        context_characters: ReadContextCharacters = 120,
+        max_matches: ReadMaxMatches = 20,
         text_revision: str | None = None,
     ) -> FulltextFindResult:
         """Find literal, case-insensitive text in one explicitly named attachment.

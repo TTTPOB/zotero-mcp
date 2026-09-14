@@ -8,7 +8,7 @@
 
 | 视图 | 内容 | 默认工具 |
 | --- | --- | --- |
-| `summary` | `key`、`version`、`item_type`、完整 `title`、`year`、`creator_summary`、`doi`、附件/父条目命中关系和全文入口 | `search_items`、`get_recent`、`get_item_children`、`get_collection_items` |
+| `summary` | `key`、`version`、`item_type`、完整 `title`、`year`、`creator_summary`、`doi`、父条目关系和全文入口；搜索时附加命中关系 | `search_items`、`get_recent`、`get_item_children`、`get_collection_items` |
 | `metadata` | `key`、`version`、`item_type`、`parent_key` 和完整语义 `data`，不带顶层 `library`/`links` | `get_item_metadata`、`get_notes`、`get_annotations` |
 | `raw` | Zotero 原生记录的深拷贝，不删字段 | 所有支持 `view` 的工具均可显式请求 |
 
@@ -24,7 +24,7 @@
 
 - 原生记录的 `key` 始终是 Zotero 实际命中的对象 key。
 - 附件命中提供 `matched_attachment_key`，并在存在父文献时提供 `parent_key`。
-- `match.kind` 为 `native`，其内部同时记录这两个关系字段。
+- 搜索摘要提供 `match_details_available=false`，不编造字段命中、snippet 或相关性分数；关系字段只说明原生附件和父条目 key。
 - 父文献不会因为附件命中被自动拉取或重复返回；需要父文献语义时按 `parent_key` 读取。
 - 独立附件保留在结果中，`parent_key` 为 `null`。
 
@@ -40,7 +40,7 @@
 
 列表结果包含 `items`、请求的 `offset` 和 `next_offset`。如果 Zotero 响应提供有效的 `Link: ... rel="next"`，从 next URL 的 `start` 读取下一偏移；如果提供 `Total-Results`，用它判断精确满页是否已经结束，并在结果中附带 `total`。这些值表示原生查询结果，不是父标签过滤后的精确总数。
 
-响应没有可用分页头时，继续使用保守 fallback：返回数量等于 `limit` 才给出 `offset + limit`，否则 `next_offset` 为 `null`。这可能需要最后一次空请求，但不会为了计算父映射而无界扫描。条目发生变化造成的普通 offset 漂移也不被伪装成快照保证。
+响应没有可用分页头时，继续使用保守 fallback：返回数量等于 `limit` 才给出 `offset + limit`，否则 `next_offset` 为 `null`。当 `Total-Results` 存在但上游返回空页时也返回 `null`，避免重复请求同一 offset 形成循环。这可能需要最后一次空请求，但不会为了计算父映射而无界扫描。条目发生变化造成的普通 offset 漂移也不被伪装成快照保证。
 
 ## 可复现体积测量
 
@@ -55,6 +55,6 @@ json.dumps(value, ensure_ascii=False, indent=2)
 | 投影 | 条目数 | 字符数 |
 | --- | ---: | ---: |
 | `raw` | 3 | 6167 |
-| `summary` | 3 | 1673 |
+| `summary` | 3 | 1226 |
 
 该数字证明固定 fixture 下投影体积变化，同时确认完整标题、独立 PDF、数量和顺序都保留。它不是用户提供 JSONL 的回放结果，也不是 tokenizer 的 token 测量。

@@ -47,13 +47,9 @@ def test_summary_keeps_native_order_titles_and_attachment_relation():
 
     assert [item["key"] for item in summaries] == ["PAPER001", "PDF00001", "PDF00002"]
     assert summaries[0]["title"] == "A complete paper title"
-    assert summaries[1]["matched_attachment_key"] == "PDF00001"
+    assert "matched_attachment_key" not in summaries[1]
+    assert "match" not in summaries[1]
     assert summaries[1]["parent_key"] == "PAPER001"
-    assert summaries[1]["match"] == {
-        "kind": "native",
-        "matched_attachment_key": "PDF00001",
-        "parent_key": "PAPER001",
-    }
     assert summaries[1]["fulltext"] == {
         "read_key": "PDF00001",
         "candidate_attachment_key": "PDF00001",
@@ -111,6 +107,7 @@ def test_everything_search_includes_native_attachment_hits(library, zot):
     assert [item["key"] for item in result["items"]] == ["PAPER001", "PDF00001"]
     assert result["items"][1]["matched_attachment_key"] == "PDF00001"
     assert result["items"][1]["parent_key"] == "PAPER001"
+    assert result["items"][1]["match_details_available"] is False
 
 
 def test_parent_tag_scope_is_explicit_and_bounded(library, zot):
@@ -173,7 +170,7 @@ def test_fixed_fixture_summary_size_is_reproducible():
 
     assert [item["key"] for item in summary] == ["PAPER001", "PDF00001", "PAPER002"]
     assert summary[0]["title"] == items[0]["data"]["title"]
-    assert summary[1]["matched_attachment_key"] == "PDF00001"
+    assert "matched_attachment_key" not in summary[1]
     assert raw_chars == 6167
-    assert summary_chars == 1673
+    assert summary_chars == 1226
     assert summary_chars < raw_chars
