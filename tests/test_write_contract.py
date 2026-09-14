@@ -51,14 +51,24 @@ def test_write_result_retains_each_input_index_and_status():
     assert result["failed"]["2"]["code"] == 400
 
 
-def test_write_result_missing_inputs_are_pending():
+def test_write_result_missing_inputs_are_unknown_and_preserve_success():
     result = write_result({"success": {"0": "NEW00001"}}, input_count=3)
     assert result["ok"] is False
+    assert result["status"] == "unknown"
+    assert result["success"] == {"0": "NEW00001"}
     assert [entry["status"] for entry in result["results"]] == [
         "success",
-        "pending",
-        "pending",
+        "unknown",
+        "unknown",
     ]
+    assert result["results"][1]["error"]["code"] == "UNKNOWN_WRITE_RESULT"
+    assert result["results"][1]["error"]["retryable"] is False
+
+
+def test_success_and_unchanged_have_success_status():
+    result = write_result({"success": {"0": "NEW00001"}, "unchanged": {"1": True}}, input_count=2)
+    assert result["ok"] is True
+    assert result["status"] == "success"
 
 
 def test_factory_connection_error_is_not_unknown_write():

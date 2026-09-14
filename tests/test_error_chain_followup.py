@@ -1,8 +1,9 @@
 import json
 from datetime import timedelta
 
+import httpx2
 from mcp.shared.memory import create_connected_server_and_client_session
-from pyzotero import PreConditionFailedError, ResourceNotFoundError
+from pyzotero import CouldNotReachURLError, PreConditionFailedError, ResourceNotFoundError
 
 from zotero_mcp.errors import UNKNOWN_WRITE_RESULT, VERSION_CONFLICT, LibraryError, from_exception
 from zotero_mcp.fulltext import FulltextError, text_revision
@@ -35,7 +36,11 @@ def test_unwrap_stops_at_pyzotero_error():
 
 
 async def test_protocol_read_connection_error_keeps_real_cause(library, zot):
-    zot.items.side_effect = ConnectionError("Zotero stopped")
+    request = httpx2.Request("GET", "http://localhost:23119/api/items")
+    cause = httpx2.ConnectError("Zotero stopped", request=request)
+    error = CouldNotReachURLError("connection failed")
+    error.__cause__ = cause
+    zot.items.side_effect = error
     async with create_connected_server_and_client_session(
         build_server(library), read_timeout_seconds=timedelta(seconds=10)
     ) as session:
@@ -46,7 +51,12 @@ async def test_protocol_read_connection_error_keeps_real_cause(library, zot):
 
 
 async def test_protocol_write_412_keeps_version_conflict(library, zot):
-    zot.update_item.side_effect = PreConditionFailedError("stale")
+    request = httpx2.Request("PATCH", "http://localhost:23119/api/items/ABCD1234")
+    response = httpx2.Response(412, request=request, text="Item has changed")
+    cause = httpx2.HTTPStatusError("412 precondition failed", request=request, response=response)
+    error = PreConditionFailedError("stale")
+    error.__cause__ = cause
+    zot.update_item.side_effect = error
     async with create_connected_server_and_client_session(
         build_server(library), read_timeout_seconds=timedelta(seconds=10)
     ) as session:

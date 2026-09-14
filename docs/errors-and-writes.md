@@ -24,7 +24,10 @@
 
 - `INVALID_ARGUMENT`：参数、输入字段或 MCP 输入校验不通过。
 - `NOT_FOUND`：条目、集合或附件不存在。
-- `NO_INDEX`：Zotero 没有可读取的附件索引。
+- `NO_INDEX`：通用的无索引错误；全文工具使用更具体的 `FULLTEXT_NOT_INDEXED`。
+- `FULLTEXT_NOT_INDEXED`：全文工具没有可读取的附件索引，并在 `details.attachment_key` 保留来源。
+- `FULLTEXT_ATTACHMENT_AMBIGUOUS`：自动选择有歧义，候选附件在 `details.candidates`。
+- `FULLTEXT_REVISION_MISMATCH`：连续读取的文本 revision 已变化，`details` 保留 expected/actual。
 - `UNAUTHORIZED`：本地授权缺失、撤销或 server ID 未提供。
 - `VERSION_CONFLICT`：本地条目版本或 Zotero server ID 不匹配。
 - `CONNECTION_ERROR`：读操作或尚未开始写请求时无法连接 Zotero。
@@ -51,7 +54,7 @@
 }
 ```
 
-每个结果的 `status` 只有 `success`、`unchanged`、`failed` 或 `pending`。`input_index` 指向原始输入位置，`key` 在 Zotero 返回创建 key 或输入本来带 key 时保留。批次可以部分成功，不要重放已成功项或整个批次。
+每个结果的 `status` 只有 `success`、`unchanged`、`failed`、`pending` 或 `unknown`。`pending` 只用于本地批量循环明确尚未调用的输入；上游创建响应缺少 index 时必须使用 `unknown`，因为无法证明该输入未执行。此时 `error.code` 为 `UNKNOWN_WRITE_RESULT`、`retryable` 为 false。`input_index` 指向原始输入位置，`key` 在 Zotero 返回创建 key 或输入本来带 key 时保留。批次可以部分成功，不要重放已成功项或整个批次。
 
 附件导入分为创建和上传两个阶段。上传失败时结果保留已创建的 `attachment_key`、`stage: "upload"` 以及条目级错误；应检查该附件后再决定后续动作，不能盲目重新创建。
 

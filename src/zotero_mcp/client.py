@@ -212,11 +212,29 @@ def _response_key(value: Any) -> str | None:
 
 def _result_status(entries: list[dict[str, Any]]) -> str:
     statuses = {entry["status"] for entry in entries}
-    if not statuses or statuses == {"success"} or statuses == {"unchanged"}:
+    if not statuses or statuses <= {"success", "unchanged"}:
         return "success"
+    if "unknown" in statuses:
+        return "unknown"
     if statuses <= {"failed"}:
         return "failed"
     return "partial"
+
+
+def _indexed_results(result: dict, field: str) -> dict[str, Any]:
+    value = result.get(field) or {}
+    if not isinstance(value, dict):
+        raise LibraryError(
+            "UNKNOWN_WRITE_RESULT",
+            f"Zotero returned malformed {field} results; inspect the library before retrying.",
+        )
+    for index in value:
+        if not str(index).isdigit():
+            raise LibraryError(
+                "UNKNOWN_WRITE_RESULT",
+                "Zotero returned a non-indexed write result; inspect the library before retrying.",
+            )
+    return {str(index): item for index, item in value.items()}
 
 
 def write_result(
@@ -225,39 +243,26 @@ def write_result(
     input_keys: list[str | None] | None = None,
     input_count: int | None = None,
 ) -> dict[str, Any]:
-    """Normalize pyzotero's indexed response while preserving legacy fields."""
+    """Normalize pyzotero's indexed create response.
+
+    A missing index is deliberately ``unknown``: the server may have applied an
+    input before dropping its response, so it is never safe to replay blindly.
+    """
     if not isinstance(result, dict):
         raise LibraryError(
             "UNKNOWN_WRITE_RESULT",
             "Zotero returned an unexpected write response; inspect the library before retrying.",
         )
-    fields = ("successful", "success", "unchanged", "failed", "pending")
-    if not any(field in result for field in fields):
+    if not {"successful", "success", "unchanged", "failed"} & result.keys():
         raise LibraryError(
             "UNKNOWN_WRITE_RESULT",
             "Zotero returned an unexpected write response; inspect the library before retrying.",
         )
-
-    successful = result.get("successful") or {}
-    success = result.get("success") or {}
-    unchanged = result.get("unchanged") or {}
-    failed = result.get("failed") or {}
-    pending = result.get("pending") or []
-    if (
-        not isinstance(successful, dict)
-        or not isinstance(success, dict)
-        or not isinstance(failed, dict)
-    ):
-        raise LibraryError(
-            "UNKNOWN_WRITE_RESULT",
-            "Zotero returned malformed indexed write results; inspect the library before retrying.",
-        )
-    if not isinstance(unchanged, (dict, list)) or not isinstance(pending, (dict, list)):
-        raise LibraryError(
-            "UNKNOWN_WRITE_RESULT",
-            "Zotero returned malformed write results; inspect the library before retrying.",
-        )
-    if not any((successful, success, unchanged, failed, pending)):
+    successful = _indexed_results(result, "successful")
+    success = _indexed_results(result, "success")
+    unchanged = _indexed_results(result, "unchanged")
+    failed = _indexed_results(result, "failed")
+    if not any((successful, success, unchanged, failed)):
         raise LibraryError(
             "UNKNOWN_WRITE_RESULT",
             "Zotero returned no item results; inspect the library before retrying.",
@@ -265,115 +270,66 @@ def write_result(
 
     if input_keys is not None:
         input_count = len(input_keys)
-    indexes: set[int] = set()
-    for values in (successful, success, failed):
-        for raw_index in values:
-            if not str(raw_index).isdigit():
-                raise LibraryError(
-                    "UNKNOWN_WRITE_RESULT",
-                    "Zotero returned a non-indexed write result; inspect the library before retrying.",
-                )
-            indexes.add(int(raw_index))
-    if isinstance(unchanged, dict):
-        for raw_index in unchanged:
-            if not str(raw_index).isdigit():
-                raise LibraryError(
-                    "UNKNOWN_WRITE_RESULT",
-                    "Zotero returned a non-indexed write result; inspect the library before retrying.",
-                )
-            indexes.add(int(raw_index))
-    elif isinstance(unchanged, list):
-        indexes.update(range(len(unchanged)))
-    if isinstance(pending, dict):
-        for raw_index in pending:
-            if not str(raw_index).isdigit():
-                raise LibraryError(
-                    "UNKNOWN_WRITE_RESULT",
-                    "Zotero returned a non-indexed pending result; inspect the library before retrying.",
-                )
-            indexes.add(int(raw_index))
-    elif isinstance(pending, list):
-        for raw_index in pending:
-            if isinstance(raw_index, bool) or not str(raw_index).isdigit():
-                raise LibraryError(
-                    "UNKNOWN_WRITE_RESULT",
-                    "Zotero returned a non-indexed pending result; inspect the library before retrying.",
-                )
-            indexes.add(int(raw_index))
+    indexes = {
+        int(index) for values in (successful, success, unchanged, failed) for index in values
+    }
     if input_count is not None:
+        if type(input_count) is not int or input_count < 1:
+            raise LibraryError(
+                "UNKNOWN_WRITE_RESULT",
+                "The write input count is invalid; inspect the library before retrying.",
+            )
         indexes.update(range(input_count))
 
+    unknown: dict[str, Any] = {}
     entries: list[dict[str, Any]] = []
     for index in sorted(indexes):
         source_key = (
             input_keys[index] if input_keys is not None and index < len(input_keys) else None
         )
-        successful_value = (
-            successful.get(str(index), successful.get(index))
-            if isinstance(successful, dict)
-            else None
-        )
-        success_value = (
-            success.get(str(index), success.get(index)) if isinstance(success, dict) else None
-        )
-        failed_value = (
-            failed.get(str(index), failed.get(index)) if isinstance(failed, dict) else None
-        )
-        unchanged_value = (
-            unchanged.get(str(index), unchanged.get(index))
-            if isinstance(unchanged, dict)
-            else (
-                unchanged[index] if isinstance(unchanged, list) and index < len(unchanged) else None
-            )
-        )
-        pending_value = (
-            pending.get(str(index), pending.get(index))
-            if isinstance(pending, dict)
-            else (index in pending if isinstance(pending, list) else False)
-        )
-        if failed_value is not None:
-            status = "failed"
-            value = failed_value
-        elif pending_value is not False and pending_value is not None:
-            status = "pending"
-            value = pending_value
-        elif successful_value is not None:
-            status = "success"
-            value = successful_value
-        elif success_value is not None:
-            status = "success"
-            value = success_value
-        elif unchanged_value is not None:
-            status = "unchanged"
-            value = unchanged_value
+        index_key = str(index)
+        if index_key in failed:
+            status, value = "failed", failed[index_key]
+        elif index_key in successful:
+            status, value = "success", successful[index_key]
+        elif index_key in success:
+            status, value = "success", success[index_key]
+        elif index_key in unchanged:
+            status, value = "unchanged", unchanged[index_key]
         else:
-            # A response that omits an input is an unexecuted input, not success.
-            status = "pending"
-            value = None
-        entries.append(
-            {
-                "input_index": index,
-                "status": status,
-                "key": source_key or _response_key(value),
-                **({"error": value} if status == "failed" else {}),
+            value = {
+                "code": "UNKNOWN_WRITE_RESULT",
+                "message": "Zotero omitted this input's result; inspect the library before retrying.",
+                "retryable": False,
             }
-        )
+            unknown[index_key] = value
+            status = "unknown"
+        entry: dict[str, Any] = {
+            "input_index": index,
+            "status": status,
+            "key": source_key or _response_key(value),
+        }
+        if status in {"failed", "unknown"}:
+            entry["error"] = value
+        entries.append(entry)
 
-    pending_keys = [
-        entry["key"]
-        for entry in entries
-        if entry["status"] == "pending" and entry.get("key") is not None
-    ]
     normalized = {
-        "ok": not any(entry["status"] in {"failed", "pending"} for entry in entries),
+        "ok": not any(entry["status"] in {"failed", "unknown"} for entry in entries),
         "status": _result_status(entries),
         "results": entries,
         "successful": successful,
         "success": success,
         "unchanged": unchanged,
         "failed": failed,
-        "pending": pending_keys,
+        "unknown": unknown,
+        "pending": [],
     }
+    if unknown:
+        normalized["error"] = {
+            "code": "UNKNOWN_WRITE_RESULT",
+            "message": "Some write results were not returned; inspect the library before retrying.",
+            "retryable": False,
+        }
     return normalized
 
 
@@ -1095,49 +1051,115 @@ class Library:
                 "Zotero created an attachment without returning its key; inspect the library.",
             )
         try:
-            result = self.zot.upload_attachments(
+            upload = self.zot.upload_attachments(
                 [{**metadata, "key": attachment_key}], basedir=str(path.parent)
             )
-            if not isinstance(result, dict):
-                raise LibraryError(
-                    "UNKNOWN_WRITE_RESULT",
-                    "Zotero returned an unexpected attachment upload response; inspect the library.",
-                )
-            failed = result.get("failure")
-            return {
-                **result,
-                "ok": not bool(failed),
-                "status": "failed" if failed else "success",
-                "stage": "upload",
-                "attachment_key": attachment_key,
-                "results": [
-                    {
-                        "input_index": 0,
-                        "key": attachment_key,
-                        "status": "failed" if failed else "success",
-                        "stage": "upload",
-                        **({"error": failed} if failed else {}),
-                    }
-                ],
-            }
-        except LibraryError:
-            raise
         except Exception as exc:
-            error = from_exception(exc, write=True, operation="attach_file.upload")
+            cause = from_exception(exc, write=True, operation="attach_file.upload")
+            error = LibraryError(
+                "UNKNOWN_WRITE_RESULT",
+                "Attachment was created but upload was not confirmed; inspect it before retrying.",
+                details={
+                    "attachment_key": attachment_key,
+                    "stage": "upload",
+                    "cause_code": cause.code,
+                    "cause_details": cause.details,
+                },
+            )
+            payload = error.as_dict()["error"]
             return {
                 "ok": False,
-                "status": "failed",
+                "status": "unknown",
                 "stage": "upload",
                 "attachment_key": attachment_key,
                 "results": [
                     {
                         "input_index": 0,
                         "key": attachment_key,
-                        "status": "failed",
+                        "status": "unknown",
                         "stage": "upload",
-                        "error": error.as_dict()["error"],
+                        "error": payload,
                     }
                 ],
                 "error": f"Attachment created but upload failed: {exc}. Inspect it before retrying.",
-                "error_details": error.as_dict()["error"],
+                "error_details": payload,
             }
+
+        # Pyzotero returns three lists here, distinct from create_items' indexed maps.
+        if not isinstance(upload, dict) or not all(
+            isinstance(upload.get(field), list) for field in ("success", "failure", "unchanged")
+        ):
+            failure = LibraryError(
+                "UNKNOWN_WRITE_RESULT",
+                "Attachment was created but upload returned no usable result; inspect it before retrying.",
+                details={"attachment_key": attachment_key, "stage": "upload"},
+            )
+            payload = failure.as_dict()["error"]
+            return {
+                "ok": False,
+                "status": "unknown",
+                "stage": "upload",
+                "attachment_key": attachment_key,
+                "results": [
+                    {
+                        "input_index": 0,
+                        "key": attachment_key,
+                        "status": "unknown",
+                        "stage": "upload",
+                        "error": payload,
+                    }
+                ],
+                "upload": upload,
+                "error": payload,
+            }
+
+        success, failures, unchanged = (
+            upload["success"],
+            upload["failure"],
+            upload["unchanged"],
+        )
+        if failures or (success and unchanged) or not (success or unchanged):
+            failure = LibraryError(
+                "UNKNOWN_WRITE_RESULT",
+                "Attachment was created but upload was not confirmed; inspect it before retrying.",
+                details={
+                    "attachment_key": attachment_key,
+                    "stage": "upload",
+                    "upload_failure": failures,
+                },
+            )
+            payload = failure.as_dict()["error"]
+            return {
+                "ok": False,
+                "status": "unknown",
+                "stage": "upload",
+                "attachment_key": attachment_key,
+                "results": [
+                    {
+                        "input_index": 0,
+                        "key": attachment_key,
+                        "status": "unknown",
+                        "stage": "upload",
+                        "error": payload,
+                    }
+                ],
+                "upload": upload,
+                "error": payload,
+            }
+
+        status = "success" if success else "unchanged"
+        return {
+            "ok": True,
+            "status": "success",
+            "stage": "upload",
+            "attachment_key": attachment_key,
+            "results": [
+                {
+                    "input_index": 0,
+                    "key": attachment_key,
+                    "status": status,
+                    "stage": "upload",
+                }
+            ],
+            "upload": upload,
+        }

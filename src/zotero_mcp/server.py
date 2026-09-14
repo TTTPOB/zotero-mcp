@@ -8,7 +8,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
 from zotero_mcp.client import Library
-from zotero_mcp.errors import from_exception
+from zotero_mcp.errors import UNKNOWN_WRITE_RESULT, from_exception
 
 READ_TOOLS = (
     "search_items",
@@ -50,15 +50,14 @@ class ZoteroMCP(FastMCP):
                 # Keep the legacy text channel a serialization of structuredContent,
                 # including model defaults added during output validation.
                 structured = result[1]
-                return (
-                    [
-                        TextContent(
-                            type="text",
-                            text=json.dumps(structured, ensure_ascii=False, separators=(",", ":")),
-                        )
-                    ],
-                    structured,
-                )
+                text = json.dumps(structured, ensure_ascii=False, separators=(",", ":"))
+                if structured.get("status") == "unknown":
+                    return CallToolResult(
+                        content=[TextContent(type="text", text=text)],
+                        structuredContent=structured,
+                        isError=True,
+                    )
+                return ([TextContent(type="text", text=text)], structured)
             return result
         except Exception as exc:
             # FastMCP wraps function and input-validation failures in ToolError.
@@ -71,7 +70,7 @@ class ZoteroMCP(FastMCP):
             if name.removeprefix("zotero_") in WRITE_TOOLS:
                 structured = {
                     "ok": False,
-                    "status": "failed",
+                    "status": "unknown" if error.code == UNKNOWN_WRITE_RESULT else "failed",
                     "error": payload["error"],
                 }
             else:

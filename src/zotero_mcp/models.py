@@ -12,7 +12,7 @@ ItemKeyList = Annotated[list[ItemKey], Field(min_length=1, max_length=50)]
 ItemData = dict[str, Any]
 ItemDataList = Annotated[list[ItemData], Field(min_length=1, max_length=50)]
 
-WriteStatus = Literal["success", "unchanged", "failed", "pending"]
+WriteStatus = Literal["success", "unchanged", "failed", "pending", "unknown"]
 WriteStage = Literal["create", "upload"]
 
 
@@ -66,6 +66,7 @@ class WriteResult(BaseModel):
     success: dict[str, Any] = Field(default_factory=dict)
     unchanged: list[str] | dict[str, Any] = Field(default_factory=list)
     failed: dict[str, Any] = Field(default_factory=dict)
+    unknown: dict[str, Any] = Field(default_factory=dict)
     pending: list[str] = Field(default_factory=list)
     error: ErrorPayload | str | dict[str, Any] | None = None
 
