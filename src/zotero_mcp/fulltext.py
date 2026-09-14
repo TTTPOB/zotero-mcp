@@ -170,13 +170,18 @@ def _fold_with_positions(content: str) -> tuple[str, list[int]]:
 
 def find_matches(
     content: str, query: str, context_characters: int, max_matches: int
-) -> list[FulltextMatch]:
-    """Find literal case-insensitive matches and map folded positions to source code points."""
+) -> tuple[list[FulltextMatch], int]:
+    """Find literal matches and count unique source spans after Unicode case folding."""
     folded_content, positions = _fold_with_positions(content)
     folded_query = query.casefold()
     matches: list[FulltextMatch] = []
+    seen_spans: set[tuple[int, int]] = set()
+    total_matches = 0
+    if not folded_query:
+        return matches, total_matches
+
     cursor = 0
-    while len(matches) < max_matches:
+    while True:
         folded_start = folded_content.find(folded_query, cursor)
         if folded_start < 0:
             break
@@ -185,20 +190,25 @@ def find_matches(
             break
         start = positions[folded_start]
         end = positions[folded_end - 1] + 1
-        snippet_start = max(0, start - context_characters)
-        snippet_end = min(len(content), end + context_characters)
-        matches.append(
-            {
-                "start": start,
-                "end": end,
-                "snippet": content[snippet_start:snippet_end],
-                "snippet_start": snippet_start,
-                "snippet_end": snippet_end,
-            }
-        )
+        span = (start, end)
+        if span not in seen_spans:
+            seen_spans.add(span)
+            total_matches += 1
+            if len(matches) < max_matches:
+                snippet_start = max(0, start - context_characters)
+                snippet_end = min(len(content), end + context_characters)
+                matches.append(
+                    {
+                        "start": start,
+                        "end": end,
+                        "snippet": content[snippet_start:snippet_end],
+                        "snippet_start": snippet_start,
+                        "snippet_end": snippet_end,
+                    }
+                )
         # Advance one folded code point so overlapping literal matches are retained.
         cursor = folded_start + 1
-    return matches
+    return matches, total_matches
 
 
 def make_find_result(
@@ -210,13 +220,17 @@ def make_find_result(
     context_characters: int,
     max_matches: int,
 ) -> FulltextFindResult:
-    matches = find_matches(content, query, context_characters, max_matches)
+    matches, total_matches = find_matches(content, query, context_characters, max_matches)
     index = {key: value for key, value in response.items() if key != "content"}
     index_coverage, _ = coverage(response, start=0, end=0, total=len(content))
+    has_more = total_matches > len(matches)
     return {
         "attachment_key": attachment_key,
         "query": query,
         "match_count": len(matches),
+        "total_matches": total_matches,
+        "has_more": has_more,
+        "truncated": has_more,
         "matches": matches,
         "text_revision": text_revision(content),
         "total_characters": len(content),

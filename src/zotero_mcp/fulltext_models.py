@@ -62,6 +62,9 @@ class FulltextFindResult(TypedDict):
     attachment_key: str
     query: str
     match_count: int
+    total_matches: int
+    has_more: bool
+    truncated: bool
     matches: list[FulltextMatch]
     text_revision: str
     total_characters: int

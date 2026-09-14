@@ -17,6 +17,9 @@ def test_find_returns_actual_code_point_positions_and_context(library, zot):
 
     assert result["attachment_key"] == "ATTACH01"
     assert result["match_count"] == 2
+    assert result["total_matches"] == 2
+    assert result["has_more"] is False
+    assert result["truncated"] is False
     assert result["matches"] == [
         {
             "start": 1,
@@ -47,6 +50,9 @@ def test_find_is_literal_and_can_limit_overlapping_results(library, zot):
         "ATTACH01", "ana", context_characters=0, max_matches=1
     )
     assert result["match_count"] == 1
+    assert result["total_matches"] == 2
+    assert result["has_more"] is True
+    assert result["truncated"] is True
     assert result["matches"][0] == {
         "start": 1,
         "end": 4,
@@ -54,6 +60,11 @@ def test_find_is_literal_and_can_limit_overlapping_results(library, zot):
         "snippet_start": 1,
         "snippet_end": 4,
     }
+
+    overlapping = library.find_item_fulltext("ATTACH01", "ana", context_characters=0)
+    assert [match["start"] for match in overlapping["matches"]] == [1, 3]
+    assert overlapping["total_matches"] == 2
+    assert overlapping["has_more"] is False
 
     literal = library.find_item_fulltext("ATTACH01", "a+b", context_characters=0)
     assert literal["match_count"] == 1
@@ -69,6 +80,19 @@ def test_find_maps_casefold_expansion_to_source_code_points(library, zot):
     assert result["matches"][0]["start"] == 0
     assert result["matches"][0]["end"] == len(content)
     assert result["matches"][0]["snippet"] == content
+
+
+def test_find_deduplicates_casefold_expansion_spans(library, zot):
+    zot.fulltext_item.return_value = {"content": "ßs"}
+
+    result = library.find_item_fulltext("ATTACH01", "s")
+
+    assert [(match["start"], match["end"]) for match in result["matches"]] == [
+        (0, 1),
+        (1, 2),
+    ]
+    assert result["total_matches"] == 2
+    assert result["has_more"] is False
 
 
 def test_find_checks_text_revision(library, zot):
