@@ -26,6 +26,7 @@ class ReadingCoverage(TypedDict):
     start: int
     end: int
     total_characters: int
+    reached_end: bool
     complete: bool
 
 

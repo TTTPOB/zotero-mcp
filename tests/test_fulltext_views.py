@@ -6,7 +6,7 @@ import pytest
 from pyzotero import ResourceNotFoundError
 
 from zotero_mcp.client import FulltextError
-from zotero_mcp.fulltext import text_revision
+from zotero_mcp.fulltext import make_chunk, text_revision
 
 
 def attachment(key: str, *, content_type: str = "application/pdf", title: str = ""):
@@ -109,8 +109,57 @@ def test_offsets_are_zero_based_unicode_code_points_and_coverage_is_explicit(lib
         "start": 1,
         "end": 3,
         "total_characters": 4,
+        "reached_end": False,
         "complete": False,
     }
+
+
+def test_tail_chunk_reaches_end_without_claiming_full_coverage(library, zot):
+    content = "甲乙丙丁"
+    zot.fulltext_item.return_value = {"content": content}
+
+    result = library.get_item_fulltext(
+        "ABCD1234", attachment_key="ATTACH01", offset=2, max_characters=2
+    )
+
+    assert result["reading_coverage"] == {
+        "start": 2,
+        "end": 4,
+        "total_characters": 4,
+        "reached_end": True,
+        "complete": False,
+    }
+
+
+def test_initial_chunk_covering_all_text_is_complete(library, zot):
+    content = "甲乙"
+    zot.fulltext_item.return_value = {"content": content}
+
+    result = library.get_item_fulltext(
+        "ABCD1234", attachment_key="ATTACH01", max_characters=2
+    )
+
+    assert result["reading_coverage"] == {
+        "start": 0,
+        "end": 2,
+        "total_characters": 2,
+        "reached_end": True,
+        "complete": True,
+    }
+
+
+def test_offset_beyond_text_is_rejected_before_returning_invalid_interval():
+    with pytest.raises(FulltextError) as caught:
+        make_chunk(
+            attachment_key="ATTACH01",
+            response={"content": "甲乙"},
+            content="甲乙",
+            offset=3,
+            max_characters=1,
+        )
+
+    assert caught.value.code == "FULLTEXT_OFFSET_OUT_OF_RANGE"
+    assert caught.value.details == {"offset": 3, "total_characters": 2}
 
 
 def test_unindexed_explicit_attachment_has_actionable_error(library, zot):

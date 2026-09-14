@@ -120,7 +120,8 @@ def coverage(
         "start": start,
         "end": end,
         "total_characters": total,
-        "complete": end >= total,
+        "reached_end": end == total,
+        "complete": start == 0 and end == total,
     }
     return index_coverage, reading_coverage
 
@@ -133,6 +134,12 @@ def make_chunk(
     offset: int,
     max_characters: int,
 ) -> FulltextChunk:
+    if offset > len(content):
+        raise FulltextError(
+            "FULLTEXT_OFFSET_OUT_OF_RANGE",
+            "offset is beyond the indexed text; use an offset up to total_characters.",
+            details={"offset": offset, "total_characters": len(content)},
+        )
     end = min(offset + max_characters, len(content))
     index = {key: value for key, value in response.items() if key != "content"}
     index_coverage, reading_coverage = coverage(response, start=offset, end=end, total=len(content))
