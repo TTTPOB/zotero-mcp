@@ -20,6 +20,7 @@ from zotero_mcp.fulltext import (
     make_chunk,
     make_find_result,
     parse_fulltext_response,
+    preferred_attachment_key,
     select_attachment,
     text_revision,
 )
@@ -630,9 +631,7 @@ class Library:
         return content, response
 
     @staticmethod
-    def _check_text_revision(
-        content: str, expected: str | None, *, attachment_key: str
-    ) -> str:
+    def _check_text_revision(content: str, expected: str | None, *, attachment_key: str) -> str:
         actual = text_revision(content)
         if expected is not None and (not isinstance(expected, str) or expected != actual):
             raise FulltextError(
@@ -676,7 +675,11 @@ class Library:
                 attachments = self.zot.everything(
                     self.zot.children(item_key, itemType="attachment")
                 )
-                selected = select_attachment(attachments, parent_key=item_key)
+                selected = select_attachment(
+                    attachments,
+                    parent_key=item_key,
+                    preferred_attachment_key=preferred_attachment_key(item),
+                )
                 selected_key = key(selected["key"])
 
         content, response = self._read_indexed_attachment(selected_key)

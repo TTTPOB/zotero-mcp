@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Iterable, Mapping
 from typing import Any
+from urllib.parse import urlparse
 
 from zotero_mcp.errors import LibraryError
 from zotero_mcp.fulltext_models import (
@@ -52,10 +54,36 @@ def attachment_candidate(attachment: Mapping[str, Any]) -> FulltextCandidate:
     }
 
 
+def preferred_attachment_key(item: Mapping[str, Any]) -> str | None:
+    """Extract an existing enclosure key without fetching its URL."""
+    links = item.get("links")
+    if not isinstance(links, Mapping):
+        return None
+    enclosure = links.get("enclosure")
+    values = enclosure if isinstance(enclosure, list) else [enclosure]
+    for value in values:
+        fields = value if isinstance(value, Mapping) else {"value": value}
+        for field in ("key", "attachment_key", "itemKey", "href", "url", "value"):
+            candidate = fields.get(field)
+            if not isinstance(candidate, str):
+                continue
+            match = re.fullmatch(r"[A-Za-z0-9]{8}", candidate)
+            if match:
+                return candidate.upper()
+            path = urlparse(candidate).path
+            match = re.search(r"(?:^|/)(?:items|attachments)/([A-Za-z0-9]{8})(?:/|$)", path)
+            if match:
+                return match.group(1).upper()
+    return None
+
+
 def select_attachment(
-    attachments: Iterable[Mapping[str, Any]], *, parent_key: str
+    attachments: Iterable[Mapping[str, Any]],
+    *,
+    parent_key: str,
+    preferred_attachment_key: str | None = None,
 ) -> Mapping[str, Any]:
-    """Select only an unambiguous preferred attachment; never probe and silently fall back."""
+    """Select a confirmed enclosure, then a unique PDF, without probing fallbacks."""
     candidates = list(attachments)
     if not candidates:
         raise FulltextError(
@@ -63,6 +91,15 @@ def select_attachment(
             "No indexed attachment text is available. Index the attachment in Zotero first or provide an attachment key.",
             details={"parent_key": parent_key, "candidates": []},
         )
+    if preferred_attachment_key:
+        matches = [
+            attachment
+            for attachment in candidates
+            if isinstance(attachment.get("key"), str)
+            and attachment["key"].upper() == preferred_attachment_key.upper()
+        ]
+        if len(matches) == 1:
+            return matches[0]
     if len(candidates) == 1:
         return candidates[0]
 

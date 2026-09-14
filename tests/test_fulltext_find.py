@@ -9,11 +9,13 @@ from zotero_mcp.fulltext import text_revision
 
 
 def test_find_returns_actual_code_point_positions_and_context(library, zot):
-    zot.fulltext_item.return_value = {"content": "前Beta中beta后", "indexedPages": 1, "totalPages": 1}
+    zot.fulltext_item.return_value = {
+        "content": "前Beta中beta后",
+        "indexedPages": 1,
+        "totalPages": 1,
+    }
 
-    result = library.find_item_fulltext(
-        "ATTACH01", "BETA", context_characters=1
-    )
+    result = library.find_item_fulltext("ATTACH01", "BETA", context_characters=1)
 
     assert result["attachment_key"] == "ATTACH01"
     assert result["match_count"] == 2
@@ -46,9 +48,7 @@ def test_find_returns_actual_code_point_positions_and_context(library, zot):
 def test_find_is_literal_and_can_limit_overlapping_results(library, zot):
     zot.fulltext_item.return_value = {"content": "banana a+b a.b"}
 
-    result = library.find_item_fulltext(
-        "ATTACH01", "ana", context_characters=0, max_matches=1
-    )
+    result = library.find_item_fulltext("ATTACH01", "ana", context_characters=0, max_matches=1)
     assert result["match_count"] == 1
     assert result["total_matches"] == 2
     assert result["has_more"] is True
@@ -100,9 +100,7 @@ def test_find_checks_text_revision(library, zot):
     first = library.find_item_fulltext("ATTACH01", "text")
 
     with pytest.raises(FulltextError) as caught:
-        library.find_item_fulltext(
-            "ATTACH01", "text", text_revision=first["text_revision"]
-        )
+        library.find_item_fulltext("ATTACH01", "text", text_revision=first["text_revision"])
 
     assert caught.value.code == "FULLTEXT_REVISION_MISMATCH"
     assert caught.value.details["actual"] == text_revision("new text")

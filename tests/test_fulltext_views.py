@@ -6,7 +6,7 @@ import pytest
 from pyzotero import ResourceNotFoundError
 
 from zotero_mcp.client import FulltextError
-from zotero_mcp.fulltext import make_chunk, text_revision
+from zotero_mcp.fulltext import make_chunk, select_attachment, text_revision
 
 
 def attachment(key: str, *, content_type: str = "application/pdf", title: str = ""):
@@ -34,6 +34,38 @@ def test_unique_pdf_is_preferred_over_other_attachment(library, zot):
     zot.fulltext_item.assert_called_once_with("PAPER001")
 
 
+def test_matching_enclosure_link_is_preferred_without_fetching_url(library, zot):
+    zot.item.side_effect = lambda item_key: {
+        "key": item_key,
+        "data": {"itemType": "journalArticle"},
+        "links": {
+            "enclosure": {
+                "href": "http://127.0.0.1:23119/api/users/0/items/PAPER002/file",
+            }
+        },
+    }
+    zot.children.return_value = [attachment("PAPER001"), attachment("PAPER002")]
+    zot.fulltext_item.return_value = {"content": "enclosure text"}
+
+    result = library.get_item_fulltext("ABCD1234")
+
+    assert result["attachment_key"] == "PAPER002"
+    zot.fulltext_item.assert_called_once_with("PAPER002")
+
+
+def test_non_candidate_enclosure_does_not_override_ambiguity():
+    candidates = [attachment("PAPER001"), attachment("PAPER002")]
+
+    with pytest.raises(FulltextError) as caught:
+        select_attachment(
+            candidates,
+            parent_key="ABCD1234",
+            preferred_attachment_key="OTHER001",
+        )
+
+    assert caught.value.code == "FULLTEXT_ATTACHMENT_AMBIGUOUS"
+
+
 def test_multiple_pdfs_return_limited_candidates_without_probing(library, zot):
     zot.children.return_value = [attachment(f"PDF{index:05d}") for index in range(1, 8)]
 
@@ -45,8 +77,7 @@ def test_multiple_pdfs_return_limited_candidates_without_probing(library, zot):
     assert error.details["candidate_count"] == 7
     assert len(error.details["candidates"]) == 5
     assert all(
-        set(candidate)
-        == {"attachment_key", "title", "filename", "content_type", "index_state"}
+        set(candidate) == {"attachment_key", "title", "filename", "content_type", "index_state"}
         for candidate in error.details["candidates"]
     )
     zot.fulltext_item.assert_not_called()
@@ -68,9 +99,7 @@ def test_follow_up_read_uses_revision_and_rejects_changed_text(library, zot):
     changed = "abcXYZgh"
     zot.fulltext_item.side_effect = [{"content": original}, {"content": changed}]
 
-    first = library.get_item_fulltext(
-        "ABCD1234", attachment_key="ATTACH01", max_characters=3
-    )
+    first = library.get_item_fulltext("ABCD1234", attachment_key="ATTACH01", max_characters=3)
     assert first["text_revision"] == text_revision(original)
     assert first["next_offset"] == 3
 
@@ -135,9 +164,7 @@ def test_initial_chunk_covering_all_text_is_complete(library, zot):
     content = "甲乙"
     zot.fulltext_item.return_value = {"content": content}
 
-    result = library.get_item_fulltext(
-        "ABCD1234", attachment_key="ATTACH01", max_characters=2
-    )
+    result = library.get_item_fulltext("ABCD1234", attachment_key="ATTACH01", max_characters=2)
 
     assert result["reading_coverage"] == {
         "start": 0,
