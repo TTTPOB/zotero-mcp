@@ -1,6 +1,6 @@
-"""Typed views for transparent Zotero attachment selection."""
+"""Typed views for Zotero-indexed fulltext reads."""
 
-from typing import TypedDict
+from typing import Any, TypedDict
 
 
 class FulltextCandidate(TypedDict):
@@ -11,3 +11,35 @@ class FulltextCandidate(TypedDict):
     filename: str | None
     content_type: str | None
     index_state: str
+
+
+class IndexCoverage(TypedDict):
+    """Coverage reported by Zotero's fulltext index, when available."""
+
+    indexed_pages: int | None
+    total_pages: int | None
+
+
+class ReadingCoverage(TypedDict):
+    """The portion of the indexed text included in this response."""
+
+    start: int
+    end: int
+    total_characters: int
+    complete: bool
+
+
+class FulltextChunk(TypedDict):
+    """A Unicode-code-point slice of one stable attachment's indexed text."""
+
+    attachment_key: str
+    content: str
+    offset: int
+    next_offset: int | None
+    total_characters: int
+    text_revision: str
+    offset_unit: str
+    offset_base: int
+    index: dict[str, Any]
+    index_coverage: IndexCoverage
+    reading_coverage: ReadingCoverage

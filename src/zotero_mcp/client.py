@@ -20,7 +20,14 @@ from pyzotero import (
 )
 
 from zotero_mcp.config import Settings, load_auth
-from zotero_mcp.fulltext import FulltextError, select_attachment
+from zotero_mcp.fulltext import (
+    FulltextError,
+    make_chunk,
+    parse_fulltext_response,
+    select_attachment,
+    text_revision,
+)
+from zotero_mcp.fulltext_models import FulltextChunk
 from zotero_mcp.presentation import ReadView, normalize_view, project_items
 
 
@@ -435,16 +442,57 @@ class Library:
         )
         return self._page(items, limit, offset, view=view)
 
+    def _read_indexed_attachment(self, attachment_key: str) -> tuple[str, dict[str, Any]]:
+        """Read one attachment; callers decide whether selecting it is allowed."""
+        try:
+            response = self.zot.fulltext_item(attachment_key)
+        except ResourceNotFoundError as exc:
+            raise FulltextError(
+                "FULLTEXT_NOT_INDEXED",
+                "No indexed text is available for this attachment. Index it in Zotero first.",
+                details={"attachment_key": attachment_key},
+            ) from exc
+        content, response = parse_fulltext_response(response, attachment_key=attachment_key)
+        if not content:
+            raise FulltextError(
+                "FULLTEXT_NOT_INDEXED",
+                "No indexed text is available for this attachment. Index it in Zotero first.",
+                details={"attachment_key": attachment_key},
+            )
+        return content, response
+
+    @staticmethod
+    def _check_text_revision(
+        content: str, expected: str | None, *, attachment_key: str
+    ) -> str:
+        actual = text_revision(content)
+        if expected is not None and (not isinstance(expected, str) or expected != actual):
+            raise FulltextError(
+                "FULLTEXT_REVISION_MISMATCH",
+                "The attachment text changed; restart reading from offset 0 with the new revision.",
+                details={
+                    "attachment_key": attachment_key,
+                    "expected": expected,
+                    "actual": actual,
+                },
+            )
+        return actual
+
     @operation()
     def get_item_fulltext(
-        self, item_key: str, offset: int = 0, max_characters: int = 20000,
+        self,
+        item_key: str,
+        offset: int = 0,
+        max_characters: int = 20000,
         attachment_key: str | None = None,
-    ) -> dict[str, Any]:
-        """Read Zotero's indexed text from one transparently selected attachment.
+        text_revision: str | None = None,
+    ) -> FulltextChunk:
+        """Read Zotero-indexed text from one stable attachment.
 
-        Explicit ``attachment_key`` wins. For a parent item, a sole attachment or
-        sole PDF is selected; ambiguous parents return candidate summaries. Offsets
-        count Unicode characters. No OCR or separate PDF extraction is performed.
+        Pass a parent item key to select a sole attachment or a sole PDF. If the
+        parent has multiple plausible attachments, provide ``attachment_key`` from
+        the returned candidate list. Offsets are zero-based Unicode code points;
+        ``text_revision`` must be reused for subsequent chunks.
         """
         pagination(1, offset)
         if type(max_characters) is not int or not 1 <= max_characters <= 50000:
@@ -462,30 +510,16 @@ class Library:
                 )
                 selected = select_attachment(attachments, parent_key=item_key)
                 selected_key = key(selected["key"])
-        try:
-            fulltext = self.zot.fulltext_item(selected_key)
-        except ResourceNotFoundError as exc:
-            raise FulltextError(
-                "FULLTEXT_NOT_INDEXED",
-                "No indexed text is available for this attachment. Index it in Zotero first.",
-                details={"attachment_key": selected_key},
-            ) from exc
-        content = fulltext.get("content", "")
-        if not isinstance(content, str) or not content:
-            raise FulltextError(
-                "FULLTEXT_NOT_INDEXED",
-                "No indexed text is available for this attachment. Index it in Zotero first.",
-                details={"attachment_key": selected_key},
-            )
-        end = min(offset + max_characters, len(content))
-        return {
-            "attachment_key": selected_key,
-            "content": content[offset:end],
-            "offset": offset,
-            "next_offset": end if end < len(content) else None,
-            "total_characters": len(content),
-            "index": {name: value for name, value in fulltext.items() if name != "content"},
-        }
+
+        content, response = self._read_indexed_attachment(selected_key)
+        self._check_text_revision(content, text_revision, attachment_key=selected_key)
+        return make_chunk(
+            attachment_key=selected_key,
+            response=response,
+            content=content,
+            offset=offset,
+            max_characters=max_characters,
+        )
 
     @operation()
     def get_item_schema(self, item_type: str | None = None) -> dict[str, Any]:
