@@ -11,15 +11,10 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import parse_qs, urlparse
 
-from pyzotero import (
-    LocalAPIKeyRequiredError,
-    PreConditionFailedError,
-    ResourceNotFoundError,
-    ServerIDMismatchError,
-    Zotero,
-)
+from pyzotero import ResourceNotFoundError, Zotero
 
 from zotero_mcp.config import Settings, load_auth
+from zotero_mcp.errors import LibraryError, from_exception
 from zotero_mcp.fulltext import (
     FulltextError,
     make_chunk,
@@ -203,36 +198,32 @@ def write_result(result: dict) -> dict[str, Any]:
 
 
 def operation(*, write: bool = False):
-    """Serialize the shared pyzotero client, including its mutable query state."""
+    """Serialize one operation and always clear pyzotero's mutable request state."""
 
     def decorate(method):
         @wraps(method)
         def wrapped(self, *args, **kwargs):
+            zot = None
             with self._lock:
-                zot = self.zot
                 try:
-                    if write and not zot.local_api_key:
-                        raise ValueError(
-                            "Run zotero-mcp authorize and approve Always Allow in Zotero first."
+                    # Resolve the factory inside the guarded block so startup and connection
+                    # failures receive the same contract as failures from an API call.
+                    zot = self.zot
+                    if write and not getattr(zot, "local_api_key", None):
+                        raise LibraryError(
+                            "UNAUTHORIZED",
+                            "Local Zotero authorization is missing. Run zotero-mcp authorize first.",
                         )
                     return method(self, *args, **kwargs)
-                except LocalAPIKeyRequiredError as exc:
-                    raise ValueError(
-                        "Local permission expired or was revoked. Run zotero-mcp authorize again."
-                    ) from exc
-                except ServerIDMismatchError as exc:
-                    raise ValueError(
-                        "Zotero's database/server ID changed. Check the active profile, then authorize again."
-                    ) from exc
-                except PreConditionFailedError as exc:
-                    raise ValueError(
-                        "The item or collection changed. Read its current local version before retrying."
-                    ) from exc
+                except Exception as exc:
+                    error = from_exception(exc, write=write, operation=method.__name__)
+                    raise error from exc
                 finally:
-                    # pyzotero clears these on success, but some failures leave them set.
-                    zot.url_params = None
-                    zot.tag_data = False
-                    zot.links = None
+                    if zot is not None:
+                        # Pyzotero clears these on success, but some failures leave them set.
+                        zot.url_params = None
+                        zot.tag_data = False
+                        zot.links = None
 
         return wrapped
 
@@ -251,7 +242,7 @@ class Library:
             candidate = self._factory()
             if not candidate.local:
                 candidate.client.close()
-                raise ValueError("Only the Zotero local API is supported.")
+                raise LibraryError("UNSUPPORTED_VERSION", "Only the Zotero local API is supported.")
             self._zot = candidate
         return self._zot
 
