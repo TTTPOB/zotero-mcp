@@ -185,9 +185,7 @@ def _item_tags(item: Mapping[str, Any] | None) -> set[str]:
     if not isinstance(tags, list):
         return set()
     return {
-        tag["tag"]
-        for tag in tags
-        if isinstance(tag, Mapping) and isinstance(tag.get("tag"), str)
+        tag["tag"] for tag in tags if isinstance(tag, Mapping) and isinstance(tag.get("tag"), str)
     }
 
 
@@ -517,9 +515,7 @@ class Library:
         )
 
     @operation()
-    def get_item_metadata(
-        self, item_key: ReadItemKey, view: ReadView = "metadata"
-    ) -> ItemMetadata:
+    def get_item_metadata(self, item_key: ReadItemKey, view: ReadView = "metadata") -> ItemMetadata:
         """Read semantic metadata by default; use ``view='raw'`` for Zotero's object."""
         item = self.zot.item(key(item_key))
         return project_items([item], view)[0]
@@ -541,9 +537,7 @@ class Library:
         )
 
     @operation()
-    def get_collections(
-        self, limit: ReadLimit = 25, offset: ReadOffset = 0
-    ) -> ItemPage:
+    def get_collections(self, limit: ReadLimit = 25, offset: ReadOffset = 0) -> ItemPage:
         """List collections with keys, parentCollection and local versions."""
         return self._page(self.zot.collections(**pagination(limit, offset)), limit, offset)
 
@@ -564,9 +558,7 @@ class Library:
         )
 
     @operation()
-    def get_tags(
-        self, limit: ReadLimit = 100, offset: ReadOffset = 0
-    ) -> ItemPage:
+    def get_tags(self, limit: ReadLimit = 100, offset: ReadOffset = 0) -> ItemPage:
         """List tags in the configured local library."""
         return self._page(self.zot.tags(**pagination(limit, offset)), limit, offset)
 

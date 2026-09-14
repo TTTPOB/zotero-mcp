@@ -70,11 +70,17 @@ len(json.dumps(recent.structuredContent, ensure_ascii=False, separators=(",", ":
 固定 fixture 的业务 page 为 `302` 字符。模拟 MCP envelope 包含 `content`（工具文本块）、`structuredContent` 和 `isError`，测量公式为：
 
 ```python
-len(json.dumps({
-    "content": [{"type": block.type, "text": block.text} for block in recent.content],
-    "structuredContent": recent.structuredContent,
-    "isError": recent.isError,
-}, ensure_ascii=False, separators=(",", ":")))
+len(
+    json.dumps(
+        {
+            "content": [{"type": block.type, "text": block.text} for block in recent.content],
+            "structuredContent": recent.structuredContent,
+            "isError": recent.isError,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+)
 ```
 
 该 envelope 为 `724` 字符。两者都是确定性 mock 业务数据的 JSON 字符数，不是用户 JSONL 回放、真实 LLM Agent 任务成功率或 tokenizer token 数。

@@ -60,9 +60,7 @@ def test_summary_keeps_native_order_titles_and_attachment_relation():
 
 def test_summary_extracts_enclosure_candidate_without_claiming_index():
     item = _native_item("PAPER001", title="Parent")
-    item["links"]["enclosure"] = {
-        "href": "http://localhost:23119/api/users/0/items/PDF00001/file"
-    }
+    item["links"]["enclosure"] = {"href": "http://localhost:23119/api/users/0/items/PDF00001/file"}
 
     summary = project_items([item], "summary")[0]
 

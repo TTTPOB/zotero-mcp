@@ -84,9 +84,7 @@ async def test_protocol_add_missing_batch_result_is_unknown_but_keeps_success(li
 
 def test_interrupted_batch_marks_only_current_item_unknown(library, zot):
     zot.update_item.side_effect = [True, ConnectionError("dropped")]
-    result = library.batch_update_tags(
-        ["ABCD1234", "SECOND02", "THIRD003"], add=["new"]
-    )
+    result = library.batch_update_tags(["ABCD1234", "SECOND02", "THIRD003"], add=["new"])
     assert result["status"] == "unknown"
     assert [entry["status"] for entry in result["results"]] == [
         "success",

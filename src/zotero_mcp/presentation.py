@@ -14,9 +14,6 @@ ReadView = Literal["summary", "metadata", "raw"]
 ReadItemKey = Annotated[str, Field(min_length=8, max_length=8, pattern=r"^[A-Za-z0-9]{8}$")]
 ReadLimit = Annotated[int, Field(ge=1, le=100)]
 ReadOffset = Annotated[int, Field(ge=0)]
-ReadMaxCharacters = Annotated[int, Field(ge=1, le=50000)]
-ReadContextCharacters = Annotated[int, Field(ge=0, le=5000)]
-ReadMaxMatches = Annotated[int, Field(ge=1, le=100)]
 ReadTag = Annotated[str, Field(min_length=1)]
 
 
@@ -37,15 +34,9 @@ class _FieldsSetModel(BaseModel):
 
     @model_serializer(mode="plain")
     def _serialize_fields_set(self) -> dict[str, Any]:
-        result = {
-            name: _serialize_value(getattr(self, name))
-            for name in self.model_fields_set
-        }
+        result = {name: _serialize_value(getattr(self, name)) for name in self.model_fields_set}
         result.update(
-            {
-                name: _serialize_value(value)
-                for name, value in (self.model_extra or {}).items()
-            }
+            {name: _serialize_value(value) for name, value in (self.model_extra or {}).items()}
         )
         return result
 
