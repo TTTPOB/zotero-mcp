@@ -43,6 +43,42 @@ CREATE_TOOLS = {"add_items", "create_note", "create_collection", "attach_file"}
 class ZoteroMCP(FastMCP):
     """FastMCP boundary that keeps library errors structured and actionable."""
 
+    def __init__(self, library: Library, *args, **kwargs):
+        self._library = library
+        self._http_app_created = False
+        super().__init__(*args, lifespan=self._lifespan, **kwargs)
+
+    @asynccontextmanager
+    async def _lifespan(self, _server):
+        try:
+            yield {}
+        finally:
+            # Streamable HTTP runs this context once per request in stateless mode.
+            if not self._http_app_created:
+                self._library.close()
+
+    def streamable_http_app(self):
+        app = super().streamable_http_app()
+        self._http_app_created = True
+        server_lifespan = app.router.lifespan_context
+
+        @asynccontextmanager
+        async def lifespan(app):
+            try:
+                async with server_lifespan(app):
+                    yield
+            finally:
+                self._library.close()
+
+        app.router.lifespan_context = lifespan
+        return app
+
+    async def run_stdio_async(self):
+        try:
+            await super().run_stdio_async()
+        finally:
+            self._library.close()
+
     async def call_tool(self, name: str, arguments: dict[str, Any]):
         try:
             result = await super().call_tool(name, arguments)
@@ -92,14 +128,8 @@ def build_server(
 ) -> FastMCP:
     library = library or Library()
 
-    @asynccontextmanager
-    async def lifespan(server):
-        try:
-            yield {}
-        finally:
-            library.close()
-
     mcp = ZoteroMCP(
+        library,
         "Zotero Local",
         instructions=(
             "Use Zotero's local library. Read metadata to obtain local versions before edits or "
@@ -107,7 +137,7 @@ def build_server(
             "inspect successful/failed/pending entries before retrying. Writes require local "
             "authorization via zotero-mcp authorize. Fulltext comes from Zotero's own index."
         ),
-        lifespan=lifespan,
+        stateless_http=True,
         host=host,
         port=port,
     )

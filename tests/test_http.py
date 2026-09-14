@@ -1,5 +1,6 @@
 """Streamable HTTP transport: unauthenticated, loopback-first, stdio unchanged."""
 
+import json
 from datetime import timedelta
 from unittest.mock import Mock, call
 
@@ -12,6 +13,24 @@ from zotero_mcp import cli, config
 from zotero_mcp.server import READ_TOOLS, WRITE_TOOLS, build_server
 
 BASE_URL = "http://127.0.0.1:8000"
+
+
+def _message(response):
+    if response.headers.get("content-type", "").startswith("text/event-stream"):
+        for line in response.text.splitlines():
+            if line.startswith("data:"):
+                return json.loads(line.removeprefix("data:").strip())
+        raise AssertionError(f"SSE response did not contain a message: {response.text!r}")
+    return response.json()
+
+
+async def _post_rpc(client, payload, *, session_id=None):
+    headers = {"accept": "application/json, text/event-stream", "content-type": "application/json"}
+    if session_id is not None:
+        headers["mcp-session-id"] = session_id
+    response = await client.post("/mcp", headers=headers, json=payload)
+    assert response.status_code == 200
+    return response, _message(response)
 
 
 def test_http_settings_default_to_loopback(monkeypatch):
@@ -94,6 +113,59 @@ def test_out_of_range_http_port_is_rejected_before_binding(fake_server, capsys):
     assert cli.main(["serve", "--transport", "http", "--port", "0"]) == 1
     assert "65535" in capsys.readouterr().err
     build.assert_not_called()
+
+
+async def test_stateless_http_survives_requests_and_service_rebuild(library, zot):
+    zot.client.close.reset_mock()
+    initialize = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-03-26",
+            "capabilities": {},
+            "clientInfo": {"name": "regression-test", "version": "1"},
+        },
+    }
+    call = {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {"name": "zotero_get_item_metadata", "arguments": {"item_key": "ABCD1234"}},
+    }
+
+    server = build_server(library)
+    assert server.settings.stateless_http is True
+    app = server.streamable_http_app()
+    transport = http.ASGITransport(app=app)
+    async with app.router.lifespan_context(app):
+        async with http.AsyncClient(transport=transport, base_url=BASE_URL) as client:
+            initialize_response, initialize_message = await _post_rpc(client, initialize)
+            assert initialize_message["result"]["serverInfo"]["name"] == "Zotero Local"
+            assert "mcp-session-id" not in initialize_response.headers
+            assert initialize_response.headers["content-type"].startswith("text/event-stream")
+
+            _, first_call = await _post_rpc(client, call)
+            assert first_call["result"]["structuredContent"]["key"] == "ABCD1234"
+            _, second_call = await _post_rpc(client, {**call, "id": 3})
+            assert second_call["result"]["structuredContent"]["key"] == "ABCD1234"
+
+            _, legacy_call = await _post_rpc(client, {**call, "id": 4}, session_id="legacy-session")
+            assert legacy_call["result"]["structuredContent"]["key"] == "ABCD1234"
+            zot.client.close.assert_not_called()
+
+    zot.client.close.assert_called_once()
+
+    rebuilt = build_server(library)
+    rebuilt_app = rebuilt.streamable_http_app()
+    rebuilt_transport = http.ASGITransport(app=rebuilt_app)
+    async with rebuilt_app.router.lifespan_context(rebuilt_app):
+        async with http.AsyncClient(transport=rebuilt_transport, base_url=BASE_URL) as client:
+            _, rebuilt_call = await _post_rpc(client, {**call, "id": 5}, session_id="legacy-session")
+            assert rebuilt_call["result"]["structuredContent"]["key"] == "ABCD1234"
+            assert zot.client.close.call_count == 1
+
+    assert zot.client.close.call_count == 2
 
 
 async def test_http_session_serves_tools_without_authentication(library, zot):
