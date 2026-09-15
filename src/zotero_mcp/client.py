@@ -1,20 +1,31 @@
 """Local API operations. Pyzotero owns HTTP, authorization headers and versions."""
 
 import copy
+import hashlib
 import html
 import mimetypes
+import os
 import re
+import tempfile
 import threading
 from collections.abc import Callable, Mapping
 from functools import wraps
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from pyzotero import ResourceNotFoundError, Zotero
 
 from zotero_mcp.config import Settings, load_auth
-from zotero_mcp.errors import LibraryError, from_exception
+from zotero_mcp.errors import (
+    ATTACHMENT_CONTENT_CONFLICT,
+    ATTACHMENT_CONTENT_UNAVAILABLE,
+    ATTACHMENT_NAME_AMBIGUOUS,
+    CONNECTION_ERROR,
+    INVALID_ARGUMENT,
+    LibraryError,
+    from_exception,
+)
 from zotero_mcp.fulltext import (
     FulltextError,
     make_chunk,
@@ -25,6 +36,10 @@ from zotero_mcp.fulltext import (
     text_revision,
 )
 from zotero_mcp.fulltext_models import (
+    AttachmentTextChunk,
+    AttachmentTextContent,
+    AttachmentTextMaxCharacters,
+    AttachmentTextOffset,
     FulltextAttachmentKey,
     FulltextChunk,
     FulltextContextCharacters,
@@ -50,6 +65,10 @@ from zotero_mcp.presentation import (
 )
 
 QUERY_OR_TAGS_REQUIRED = "QUERY_OR_TAGS_REQUIRED"
+PAPER_CHEW_MARKDOWN_FILENAME = "paper-chew-fulltext.md"
+SAFE_TEXT_CONTENT_TYPES = {"text/markdown", "text/plain"}
+SAFE_TEXT_SUFFIXES = {".md", ".markdown", ".txt"}
+MAX_ATTACHMENT_TEXT_BYTES = 50 * 1024 * 1024
 
 
 def new_client(settings: Settings | None = None) -> Zotero:
@@ -602,6 +621,169 @@ class Library:
             key(attachment_key), itemType="annotation", **pagination(limit, offset)
         )
         return self._page(items, limit, offset, view=view)
+
+    @staticmethod
+    def _safe_attachment_text_metadata(item: Mapping[str, Any]) -> tuple[str, str]:
+        data = item.get("data")
+        if not isinstance(data, Mapping) or data.get("itemType") != "attachment":
+            raise LibraryError(
+                INVALID_ARGUMENT,
+                "The requested item is not a Zotero attachment.",
+            )
+        filename = data.get("filename")
+        content_type = data.get("contentType")
+        if not isinstance(filename, str) or not filename.strip():
+            raise LibraryError(
+                INVALID_ARGUMENT,
+                "The requested attachment has no safe text filename.",
+            )
+        if not isinstance(content_type, str):
+            raise LibraryError(
+                INVALID_ARGUMENT,
+                "The requested attachment has no safe text content type.",
+            )
+        normalized_type = content_type.lower().split(";", 1)[0].strip()
+        suffix = Path(filename).suffix.lower()
+        if normalized_type not in SAFE_TEXT_CONTENT_TYPES or suffix not in SAFE_TEXT_SUFFIXES:
+            raise LibraryError(
+                INVALID_ARGUMENT,
+                "Only UTF-8 Markdown or plain-text attachments are readable.",
+                details={
+                    "filename": filename,
+                    "content_type": normalized_type,
+                },
+            )
+        return filename, normalized_type
+
+    def _read_file_redirect(self, attachment_key: str) -> bytes:
+        client = getattr(self.zot, "client", None)
+        if client is None:
+            raise LibraryError(
+                CONNECTION_ERROR,
+                "Zotero did not expose a configured HTTP client for the file redirect.",
+            )
+        url = (
+            f"{str(self.zot.endpoint).rstrip('/')}/{self.zot.library_type}/"
+            f"{self.zot.library_id}/items/{key(attachment_key)}/file"
+        )
+        try:
+            response = client.get(
+                url,
+                headers=self.zot._local_headers(),
+                follow_redirects=False,
+                timeout=120,
+            )
+        except Exception as exc:
+            error = from_exception(exc, operation="read_attachment_file_redirect")
+            raise error from exc
+        self.zot.request = response
+        status = getattr(response, "status_code", 0)
+        if 300 <= status < 400:
+            location = response.headers.get("location")
+            parsed = urlparse(location or "")
+            if (
+                parsed.scheme.lower() != "file"
+                or parsed.netloc.lower() not in {"", "localhost"}
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise LibraryError(
+                    INVALID_ARGUMENT,
+                    "Zotero returned an unsafe local file redirect.",
+                )
+            path_text = unquote(parsed.path)
+            if os.name == "nt" and re.match(r"^/[A-Za-z]:", path_text):
+                path_text = path_text[1:]
+            path = Path(path_text)
+            try:
+                info = path.stat()
+                if not path.is_file() or info.st_size > MAX_ATTACHMENT_TEXT_BYTES:
+                    raise LibraryError(
+                        INVALID_ARGUMENT,
+                        "The redirected text attachment is missing, not a regular file, or exceeds 50 MiB.",
+                    )
+                return path.read_bytes()
+            except LibraryError:
+                raise
+            except OSError as exc:
+                error = from_exception(exc, operation="read_attachment_file_redirect")
+                raise error from exc
+        if 200 <= status < 300:
+            content = response.content
+            if isinstance(content, bytes):
+                return content
+        raise LibraryError(
+            CONNECTION_ERROR,
+            "Zotero did not return a readable attachment file.",
+            details={"status_code": status},
+        )
+
+    def _read_attachment_bytes(self, attachment_key: str) -> bytes:
+        try:
+            content = self.zot.file(key(attachment_key))
+        except (KeyError, NotImplementedError):
+            content = self._read_file_redirect(attachment_key)
+        except Exception as exc:
+            error = from_exception(exc, operation="read_attachment_file")
+            raise error from exc
+        if not isinstance(content, bytes):
+            raise LibraryError(
+                INVALID_ARGUMENT,
+                "Zotero returned a non-binary attachment response.",
+            )
+        if len(content) > MAX_ATTACHMENT_TEXT_BYTES:
+            raise LibraryError(
+                INVALID_ARGUMENT,
+                "The text attachment exceeds the 50 MiB safety limit.",
+                details={"byte_length": len(content)},
+            )
+        return content
+
+    @operation()
+    def read_attachment_text(
+        self,
+        attachment_key: FulltextAttachmentKey,
+        offset: AttachmentTextOffset = 0,
+        max_characters: AttachmentTextMaxCharacters = 50000,
+    ) -> AttachmentTextChunk:
+        """Read original UTF-8 bytes from one safe text attachment."""
+        if type(offset) is not int or offset < 0:
+            raise ValueError("offset must be a nonnegative integer.")
+        if type(max_characters) is not int or not 1 <= max_characters <= 50000:
+            raise ValueError("max_characters must be between 1 and 50000.")
+        attachment_key = key(attachment_key)
+        item = self.zot.item(attachment_key)
+        filename, content_type = self._safe_attachment_text_metadata(item)
+        raw = self._read_attachment_bytes(attachment_key)
+        try:
+            content = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise LibraryError(
+                INVALID_ARGUMENT,
+                "The text attachment is not valid UTF-8.",
+                details={"attachment_key": attachment_key},
+            ) from exc
+        total_characters = len(content)
+        if offset > total_characters:
+            raise LibraryError(
+                INVALID_ARGUMENT,
+                "offset is beyond the attachment text; use an offset up to total_characters.",
+                details={"offset": offset, "total_characters": total_characters},
+            )
+        end = min(offset + max_characters, total_characters)
+        return {
+            "source": "attachment-file",
+            "encoding": "utf-8",
+            "attachment_key": attachment_key,
+            "filename": filename,
+            "content_type": content_type,
+            "content": content[offset:end],
+            "offset": offset,
+            "next_offset": end if end < total_characters else None,
+            "total_characters": total_characters,
+            "byte_length": len(raw),
+            "content_sha256": hashlib.sha256(raw).hexdigest(),
+        }
 
     def _read_indexed_attachment(self, attachment_key: str) -> tuple[str, dict[str, Any]]:
         """Read one attachment; callers decide whether selecting it is allowed."""
@@ -1175,3 +1357,169 @@ class Library:
             ],
             "upload": upload,
         }
+
+    @operation(write=True)
+    def attach_markdown(self, parent_key: ItemKey, content: AttachmentTextContent) -> WriteResponse:
+        """Create or reuse the fixed Markdown attachment for one paper."""
+        parent_key = key(parent_key)
+        if not isinstance(content, str) or not content:
+            raise ValueError("content must contain non-empty Markdown text.")
+        try:
+            raw = content.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ValueError("content must be valid UTF-8 text.") from exc
+        if len(raw) > MAX_ATTACHMENT_TEXT_BYTES:
+            raise ValueError("content must not exceed 50 MiB when encoded as UTF-8.")
+        digest = hashlib.sha256(raw).hexdigest()
+
+        try:
+            children = self.zot.everything(self.zot.children(parent_key, itemType="attachment"))
+        except Exception as exc:
+            error = from_exception(exc, operation="attach_markdown.inspect")
+            payload = error.as_dict()["error"]
+            return {
+                "ok": False,
+                "status": "unknown",
+                "results": [
+                    {
+                        "input_index": 0,
+                        "status": "unknown",
+                        "error": payload,
+                    }
+                ],
+                "error": payload,
+                "content_sha256": digest,
+            }
+
+        matches = []
+        for item in children:
+            if not isinstance(item, Mapping):
+                continue
+            data = item.get("data")
+            if isinstance(data, Mapping) and data.get("filename") == PAPER_CHEW_MARKDOWN_FILENAME:
+                matches.append(item)
+
+        if len(matches) > 1:
+            error = {
+                "code": ATTACHMENT_NAME_AMBIGUOUS,
+                "message": "Multiple fixed Markdown attachments already exist; no duplicate was created.",
+                "retryable": False,
+                "details": {
+                    "parent_key": parent_key,
+                    "filename": PAPER_CHEW_MARKDOWN_FILENAME,
+                    "attachment_keys": [item.get("key") for item in matches],
+                },
+            }
+            return {
+                "ok": False,
+                "status": "failed",
+                "failed": {parent_key: error},
+                "results": [
+                    {
+                        "input_index": 0,
+                        "status": "failed",
+                        "error": error,
+                    }
+                ],
+                "error": error,
+                "content_sha256": digest,
+            }
+
+        if matches:
+            existing = matches[0]
+            existing_key = existing.get("key")
+            if not isinstance(existing_key, str):
+                error = {
+                    "code": ATTACHMENT_CONTENT_UNAVAILABLE,
+                    "message": "The existing fixed Markdown attachment has no key; no duplicate was created.",
+                    "retryable": False,
+                }
+                return {
+                    "ok": False,
+                    "status": "unknown",
+                    "results": [{"input_index": 0, "status": "unknown", "error": error}],
+                    "error": error,
+                    "content_sha256": digest,
+                }
+            try:
+                self._safe_attachment_text_metadata(existing)
+                existing_raw = self._read_attachment_bytes(existing_key)
+            except LibraryError as exc:
+                error = {
+                    "code": ATTACHMENT_CONTENT_UNAVAILABLE,
+                    "message": "The existing fixed Markdown attachment could not be read; no duplicate was created.",
+                    "retryable": False,
+                    "details": {
+                        "attachment_key": existing_key,
+                        "cause": exc.as_dict()["error"],
+                    },
+                }
+                return {
+                    "ok": False,
+                    "status": "unknown",
+                    "attachment_key": existing_key,
+                    "results": [
+                        {
+                            "input_index": 0,
+                            "key": existing_key,
+                            "status": "unknown",
+                            "error": error,
+                        }
+                    ],
+                    "error": error,
+                    "content_sha256": digest,
+                }
+            existing_digest = hashlib.sha256(existing_raw).hexdigest()
+            if existing_digest == digest:
+                return {
+                    "ok": True,
+                    "status": "success",
+                    "attachment_key": existing_key,
+                    "unchanged": [existing_key],
+                    "results": [
+                        {
+                            "input_index": 0,
+                            "key": existing_key,
+                            "status": "unchanged",
+                        }
+                    ],
+                    "content_sha256": digest,
+                }
+            error = {
+                "code": ATTACHMENT_CONTENT_CONFLICT,
+                "message": "A different fixed Markdown attachment already exists; no duplicate was created.",
+                "retryable": False,
+                "details": {
+                    "attachment_key": existing_key,
+                    "existing_sha256": existing_digest,
+                    "requested_sha256": digest,
+                },
+            }
+            return {
+                "ok": False,
+                "status": "failed",
+                "attachment_key": existing_key,
+                "failed": {existing_key: error},
+                "results": [
+                    {
+                        "input_index": 0,
+                        "key": existing_key,
+                        "status": "failed",
+                        "error": error,
+                    }
+                ],
+                "error": error,
+                "content_sha256": digest,
+            }
+
+        with tempfile.TemporaryDirectory(prefix="zotero-mcp-markdown-") as directory:
+            path = Path(directory) / PAPER_CHEW_MARKDOWN_FILENAME
+            path.write_bytes(raw)
+            result = self.attach_file(
+                parent_key,
+                str(path),
+                title=PAPER_CHEW_MARKDOWN_FILENAME,
+            )
+        result["content_sha256"] = digest
+        result["filename"] = PAPER_CHEW_MARKDOWN_FILENAME
+        return result

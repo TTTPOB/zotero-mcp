@@ -17,6 +17,7 @@
 | `get_annotations` | 读取指定附件的 Zotero 批注 |
 | `get_item_fulltext` | 读取选定附件的 Zotero 索引文本，按字符分页并校验文本版本 |
 | `find_item_fulltext` | 在指定附件的索引文本中查找字面量，返回附近片段和原文字符位置 |
+| `read_attachment_text` | 从安全的 Markdown/text 附件读取原始 UTF-8 文件内容，不使用 Zotero 索引 |
 | `get_item_schema` | 从本地 Zotero 查询条目类型、字段和作者类型 |
 | `export_items` | 通过本地 Zotero 导出 BibTeX、RIS、CSL JSON |
 
@@ -28,7 +29,7 @@
 
 全文工具接受论文或附件 key。传父文献时透明选择附件；无法确定时返回候选清单，再指定 `attachment_key`。续读传回实际附件 key 和 `text_revision`，文本改变会要求重新开始。偏移以 0 起始 Unicode code point 计数，`max_characters` 为 1–50,000。索引页数和本次返回的文本范围分别表达，不表示 Agent 已通读附件。
 
-`find_item_fulltext` 只查指定附件，使用不区分大小写的字面量匹配，返回片段及原文字符位置，不进行全库扫描。详见 [读取视图](read-views.md) 与 [全文阅读](fulltext-reading.md)。
+`find_item_fulltext` 只查指定附件，使用不区分大小写的字面量匹配，返回片段及原文字符位置，不进行全库扫描。`read_attachment_text` 则读取附件文件本身：仅接受 `text/markdown` 或 `text/plain` 且扩展名为 `.md`、`.markdown` 或 `.txt` 的附件，按 UTF-8 原样解码，单文件上限 50 MiB。它返回原始 bytes 的 SHA-256，不使用索引的 `text_revision`。详见 [读取视图](read-views.md) 与 [全文阅读](fulltext-reading.md)。
 
 ## 写入
 
@@ -46,6 +47,7 @@
 | `batch_update_tags` | 批量增删标签，保留未修改的标签和标签类型 |
 | `manage_collection_items` | 批量加入/移出集合，保留其他集合归属 |
 | `attach_file` | 将绝对路径的本地文件复制到 Zotero 附件存储 |
+| `attach_markdown` | 幂等创建固定名称 `paper-chew-fulltext.md` Markdown 附件 |
 
 修改或删除条目前，先读取其 `version`。集合改名/移动也需要本地版本。发生版本冲突时，重新读取后决定如何修改；程序不会用旧数据重试覆盖。
 
@@ -53,7 +55,7 @@
 
 批量标签或集合归属修改遇到错误时会停止。`results` 按输入索引和 key 关联逐项结果，旧的 `updated`、`unchanged`、`failed`、`pending` 等聚合字段继续保留。批量创建遵循 Zotero 的逐条结果，成功和失败可同时存在；响应未确认的输入需要检查库状态，不能当作未执行直接重放。
 
-附件上传若在创建条目之后失败，保留 `attachment_key` 和 `stage`。先检查该附件，避免重新调用产生重复项。工具级错误使用稳定的 `code`、`message`、`retryable` 和 MCP `isError=true`；部分批量结果保留已完成项，恢复方法见 [错误与写入](errors-and-writes.md)。
+附件上传若在创建条目之后失败，保留 `attachment_key` 和 `stage`。先检查该附件，避免重新调用产生重复项。工具级错误使用稳定的 `code`、`message`、`retryable` 和 MCP `isError=true`；部分批量结果保留已完成项，恢复方法见 [错误与写入](errors-and-writes.md)。`attach_markdown` 固定使用 `paper-chew-fulltext.md`，同内容附件返回 `unchanged`，同名异内容、多同名或已有附件无法读取时不会创建第二份，也不会自动删除。
 
 更新后没有服务器确认的新版本时，下一次修改前重新读取，不自行把旧版本加一。
 

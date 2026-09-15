@@ -22,6 +22,7 @@ READ_TOOLS = (
     "get_annotations",
     "get_item_fulltext",
     "find_item_fulltext",
+    "read_attachment_text",
     "get_item_schema",
     "export_items",
 )
@@ -36,8 +37,15 @@ WRITE_TOOLS = (
     "batch_update_tags",
     "manage_collection_items",
     "attach_file",
+    "attach_markdown",
 )
-CREATE_TOOLS = {"add_items", "create_note", "create_collection", "attach_file"}
+CREATE_TOOLS = {
+    "add_items",
+    "create_note",
+    "create_collection",
+    "attach_file",
+    "attach_markdown",
+}
 
 
 class ZoteroMCP(FastMCP):

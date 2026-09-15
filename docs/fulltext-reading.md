@@ -67,3 +67,11 @@
 匹配规则固定为 Unicode `casefold` 后的字面量子串匹配：大小写不敏感，不使用正则表达式，不搜索父文献或整个资料库；重叠的不同原文区间会保留，casefold 展开造成的相同原文区间只计一次。结果中的 `start` 和 `end` 是原始未修改文本的 0 起始 code point 区间，`snippet_start`、`snippet_end` 是上下文片段在同一原文中的实际区间。`match_count` 是本次返回的数量，`total_matches` 是完整扫描后的唯一区间数量；达到 `max_matches` 时以 `has_more=true`、`truncated=true` 明确提示仍有结果。`text_revision` 可按连续读取的相同方式校验正文没有变化。
 
 该能力仍会让 Zotero 返回指定附件的完整索引文本，再在 MCP 进程内定位片段；它是轻量跳读工具，不是新的全文索引、向量检索或 PDF 解析器。
+
+## 原始 Markdown 附件
+
+`zotero_read_attachment_text` 与 `zotero_get_item_fulltext` 不同：它请求 Zotero 的 `/file` 端点，读取附件原始 bytes，再按 UTF-8 解码。不会使用 Zotero 索引，也不会规范化换行、Markdown 或 Unicode。只接受 `text/markdown` 或 `text/plain` 且文件名扩展名为 `.md`、`.markdown` 或 `.txt` 的附件，单文件上限为 50 MiB。若 Zotero 将文件重定向到 `file://`，服务端只接受空 host 或 `localhost` 的本地 URI，并拒绝远程路径。
+
+返回的 `content_sha256` 是原始 bytes 的 SHA-256。分页时客户端应比较每页返回的相同 hash，并使用 `offset`、`next_offset` 和 `total_characters` 拼接原文；该 hash 不等同于索引读取的 `text_revision`。
+
+`zotero_attach_markdown` 在服务端创建临时的固定名称 `paper-chew-fulltext.md` 文件，然后复用 `attach_file` 导入。调用前会检查同一父条目的同名附件：内容相同返回 `unchanged`；内容不同、多同名或原始内容不可读取时返回明确错误，不创建重复附件，也不会自动删除已有附件。

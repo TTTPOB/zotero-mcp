@@ -43,6 +43,27 @@ async def test_fulltext_tools_expose_constrained_inputs_and_success(library, zot
     assert result.structuredContent["attachment_key"] == "ATTACH01"
 
 
+async def test_original_attachment_tools_expose_safe_schemas_and_annotations(library, zot):
+    async with create_connected_server_and_client_session(build_server(library)) as session:
+        tools = {tool.name: tool for tool in (await session.list_tools()).tools}
+
+    read = tools["zotero_read_attachment_text"]
+    write = tools["zotero_attach_markdown"]
+    assert read.annotations.readOnlyHint is True
+    assert read.annotations.destructiveHint is False
+    assert write.annotations.readOnlyHint is False
+    assert write.annotations.destructiveHint is False
+    assert read.inputSchema["properties"]["max_characters"] == {
+        "default": 50000,
+        "maximum": 50000,
+        "minimum": 1,
+        "title": "Max Characters",
+        "type": "integer",
+    }
+    assert set(write.inputSchema["required"]) == {"parent_key", "content"}
+    assert write.inputSchema["properties"]["content"]["minLength"] == 1
+
+
 async def test_fulltext_schema_rejects_bad_key_as_structured_error(library, zot):
     async with create_connected_server_and_client_session(
         build_server(library), read_timeout_seconds=timedelta(seconds=10)

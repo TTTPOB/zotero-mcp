@@ -32,6 +32,9 @@
 - `VERSION_CONFLICT`：本地条目版本或 Zotero server ID 不匹配。
 - `CONNECTION_ERROR`：读操作或尚未开始写请求时无法连接 Zotero。
 - `UNKNOWN_WRITE_RESULT`：写请求期间连接中断、响应不完整或无法确认结果。
+- `ATTACHMENT_NAME_AMBIGUOUS`：固定 Markdown 文件名对应多个已有附件，未创建新附件。
+- `ATTACHMENT_CONTENT_CONFLICT`：固定 Markdown 文件名已有不同内容，未创建新附件。
+- `ATTACHMENT_CONTENT_UNAVAILABLE`：已有固定 Markdown 附件无法读取，未创建新附件。
 - `LIBRARY_LOCKED`：Zotero 正在锁定库。
 - `UNSUPPORTED_VERSION`：客户端未使用本地 API，或 Zotero 未提供受支持的 server ID。
 
