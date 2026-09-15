@@ -15,7 +15,7 @@ def attachment(
     key: str = "ATTACH01",
     *,
     filename: str = "paper-chew-fulltext.md",
-    content_type: str = "text/markdown",
+    content_type: str | None = "text/markdown",
 ) -> dict:
     return {
         "key": key,
@@ -50,6 +50,29 @@ def test_read_attachment_text_uses_original_bytes_and_pages(library, zot):
     assert zot.file.call_count == 2
 
 
+@pytest.mark.parametrize("content_type", ["application/octet-stream", None])
+def test_read_attachment_text_accepts_legacy_markdown_mime(content_type, library, zot):
+    zot.item.side_effect = None
+    zot.item.return_value = attachment(content_type=content_type)
+    zot.file.return_value = b"# Legacy Markdown\n"
+
+    result = library.read_attachment_text("ATTACH01")
+
+    assert result["content"] == "# Legacy Markdown\n"
+    assert result["content_type"] == "application/octet-stream"
+
+
+def test_read_attachment_text_rejects_invalid_utf8_legacy_markdown(library, zot):
+    zot.item.side_effect = None
+    zot.item.return_value = attachment(content_type="application/octet-stream")
+    zot.file.return_value = b"# invalid \xff\n"
+
+    with pytest.raises(ValueError) as caught:
+        library.read_attachment_text("ATTACH01")
+
+    assert caught.value.code == INVALID_ARGUMENT
+
+
 def test_read_attachment_text_rejects_pdf_before_file_read(library, zot):
     zot.item.side_effect = None
     zot.item.return_value = attachment(filename="paper.pdf", content_type="application/pdf")
@@ -59,6 +82,17 @@ def test_read_attachment_text_rejects_pdf_before_file_read(library, zot):
 
     assert caught.value.code == INVALID_ARGUMENT
     zot.file.assert_not_called()
+
+
+def test_read_attachment_text_rejects_binary_signature_with_legacy_markdown_metadata(library, zot):
+    zot.item.side_effect = None
+    zot.item.return_value = attachment(content_type="application/octet-stream")
+    zot.file.return_value = b"%PDF-1.7\n"
+
+    with pytest.raises(ValueError) as caught:
+        library.read_attachment_text("ATTACH01")
+
+    assert caught.value.code == INVALID_ARGUMENT
 
 
 def test_read_attachment_text_handles_local_file_redirect_with_configured_client(
@@ -110,6 +144,26 @@ def test_read_attachment_text_rejects_remote_file_redirect(library, zot, tmp_pat
 
     assert caught.value.code == INVALID_ARGUMENT
     zot.fulltext_item.assert_not_called()
+
+
+@pytest.mark.parametrize("guessed_type", ["application/octet-stream", None])
+def test_attach_markdown_overrides_os_mime_guess(guessed_type, library, zot, monkeypatch):
+    zot.children.return_value = []
+    zot.everything.side_effect = lambda items: items
+    zot.upload_attachments.return_value = {
+        "success": [{"key": "NEW00001"}],
+        "failure": [],
+        "unchanged": [],
+    }
+    monkeypatch.setattr(
+        "zotero_mcp.client.mimetypes.guess_type",
+        lambda filename: (guessed_type, None),
+    )
+
+    result = library.attach_markdown("ABCD1234", "# Paper\n")
+
+    assert result["ok"] is True
+    assert zot.create_items.call_args.args[0][0]["contentType"] == "text/markdown"
 
 
 def test_attach_markdown_writes_fixed_temp_file_and_reuses_attach_file(library, zot):

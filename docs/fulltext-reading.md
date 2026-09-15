@@ -70,7 +70,7 @@
 
 ## 原始 Markdown 附件
 
-`zotero_read_attachment_text` 与 `zotero_get_item_fulltext` 不同：它请求 Zotero 的 `/file` 端点，读取附件原始 bytes，再按 UTF-8 解码。不会使用 Zotero 索引，也不会规范化换行、Markdown 或 Unicode。只接受 `text/markdown` 或 `text/plain` 且文件名扩展名为 `.md`、`.markdown` 或 `.txt` 的附件，单文件上限为 50 MiB。若 Zotero 将文件重定向到 `file://`，服务端只接受空 host 或 `localhost` 的本地 URI，并拒绝远程路径。
+`zotero_read_attachment_text` 与 `zotero_get_item_fulltext` 不同：它请求 Zotero 的 `/file` 端点，读取附件原始 bytes，再按 UTF-8 解码。不会使用 Zotero 索引，也不会规范化换行、Markdown 或 Unicode。正常情况下只接受 `text/markdown` 或 `text/plain` 且文件名扩展名为 `.md`、`.markdown` 或 `.txt` 的附件；为兼容旧版 Windows 上传的 `.md/.markdown` 附件，也接受 `application/octet-stream` 或缺失 MIME，但仍必须通过二进制签名、UTF-8 和 50 MiB 检查。若 Zotero 将文件重定向到 `file://`，服务端只接受空 host 或 `localhost` 的本地 URI，并拒绝远程路径。
 
 返回的 `content_sha256` 是原始 bytes 的 SHA-256。分页时客户端应比较每页返回的相同 hash，并使用 `offset`、`next_offset` 和 `total_characters` 拼接原文；该 hash 不等同于索引读取的 `text_revision`。
 

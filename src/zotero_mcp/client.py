@@ -67,8 +67,19 @@ from zotero_mcp.presentation import (
 QUERY_OR_TAGS_REQUIRED = "QUERY_OR_TAGS_REQUIRED"
 PAPER_CHEW_MARKDOWN_FILENAME = "paper-chew-fulltext.md"
 SAFE_TEXT_CONTENT_TYPES = {"text/markdown", "text/plain"}
+LEGACY_MARKDOWN_CONTENT_TYPES = {"", "application/octet-stream"}
 SAFE_TEXT_SUFFIXES = {".md", ".markdown", ".txt"}
 MAX_ATTACHMENT_TEXT_BYTES = 50 * 1024 * 1024
+BINARY_SIGNATURES = (
+    b"%PDF-",
+    b"PK\x03\x04",
+    b"\x89PNG\r\n\x1a\n",
+    b"\xff\xd8\xff",
+    b"GIF8",
+    b"\x1f\x8b",
+    b"Rar!",
+    b"\x7fELF",
+)
 
 
 def new_client(settings: Settings | None = None) -> Zotero:
@@ -637,23 +648,24 @@ class Library:
                 INVALID_ARGUMENT,
                 "The requested attachment has no safe text filename.",
             )
-        if not isinstance(content_type, str):
-            raise LibraryError(
-                INVALID_ARGUMENT,
-                "The requested attachment has no safe text content type.",
-            )
-        normalized_type = content_type.lower().split(";", 1)[0].strip()
+        normalized_type = (
+            content_type.lower().split(";", 1)[0].strip() if isinstance(content_type, str) else ""
+        )
         suffix = Path(filename).suffix.lower()
-        if normalized_type not in SAFE_TEXT_CONTENT_TYPES or suffix not in SAFE_TEXT_SUFFIXES:
+        is_safe_type = normalized_type in SAFE_TEXT_CONTENT_TYPES
+        is_legacy_markdown = (
+            suffix in {".md", ".markdown"} and normalized_type in LEGACY_MARKDOWN_CONTENT_TYPES
+        )
+        if suffix not in SAFE_TEXT_SUFFIXES or not (is_safe_type or is_legacy_markdown):
             raise LibraryError(
                 INVALID_ARGUMENT,
                 "Only UTF-8 Markdown or plain-text attachments are readable.",
                 details={
                     "filename": filename,
-                    "content_type": normalized_type,
+                    "content_type": normalized_type or None,
                 },
             )
-        return filename, normalized_type
+        return filename, normalized_type or "application/octet-stream"
 
     def _read_file_redirect(self, attachment_key: str) -> bytes:
         client = getattr(self.zot, "client", None)
@@ -739,6 +751,25 @@ class Library:
             )
         return content
 
+    @staticmethod
+    def _decode_attachment_text(content: bytes, attachment_key: str) -> str:
+        if b"\x00" in content or any(
+            content.startswith(signature) for signature in BINARY_SIGNATURES
+        ):
+            raise LibraryError(
+                INVALID_ARGUMENT,
+                "The attachment has a binary file signature and is not readable as text.",
+                details={"attachment_key": attachment_key},
+            )
+        try:
+            return content.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise LibraryError(
+                INVALID_ARGUMENT,
+                "The text attachment is not valid UTF-8.",
+                details={"attachment_key": attachment_key},
+            ) from exc
+
     @operation()
     def read_attachment_text(
         self,
@@ -755,14 +786,7 @@ class Library:
         item = self.zot.item(attachment_key)
         filename, content_type = self._safe_attachment_text_metadata(item)
         raw = self._read_attachment_bytes(attachment_key)
-        try:
-            content = raw.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise LibraryError(
-                INVALID_ARGUMENT,
-                "The text attachment is not valid UTF-8.",
-                details={"attachment_key": attachment_key},
-            ) from exc
+        content = self._decode_attachment_text(raw, attachment_key)
         total_characters = len(content)
         if offset > total_characters:
             raise LibraryError(
@@ -1207,9 +1231,13 @@ class Library:
 
         return self._edit_lists(item_keys, "collections", change)
 
-    @operation(write=True)
-    def attach_file(
-        self, parent_key: ItemKey, file_path: str, title: str | None = None
+    def _attach_file(
+        self,
+        parent_key: ItemKey,
+        file_path: str,
+        title: str | None = None,
+        *,
+        content_type_override: str | None = None,
     ) -> WriteResponse:
         """Copy an existing absolute-path file into Zotero's local attachment storage.
 
@@ -1226,7 +1254,9 @@ class Library:
             "linkMode": "imported_file",
             "title": title or path.name,
             "filename": path.name,
-            "contentType": mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+            "contentType": content_type_override
+            or mimetypes.guess_type(path.name)[0]
+            or "application/octet-stream",
         }
         created = write_result(self.zot.create_items([metadata]), input_count=1)
         if not created["ok"]:
@@ -1359,6 +1389,13 @@ class Library:
         }
 
     @operation(write=True)
+    def attach_file(
+        self, parent_key: ItemKey, file_path: str, title: str | None = None
+    ) -> WriteResponse:
+        """Copy an existing absolute-path file into Zotero's local attachment storage."""
+        return self._attach_file(parent_key, file_path, title)
+
+    @operation(write=True)
     def attach_markdown(self, parent_key: ItemKey, content: AttachmentTextContent) -> WriteResponse:
         """Create or reuse the fixed Markdown attachment for one paper."""
         parent_key = key(parent_key)
@@ -1444,6 +1481,7 @@ class Library:
             try:
                 self._safe_attachment_text_metadata(existing)
                 existing_raw = self._read_attachment_bytes(existing_key)
+                self._decode_attachment_text(existing_raw, existing_key)
             except LibraryError as exc:
                 error = {
                     "code": ATTACHMENT_CONTENT_UNAVAILABLE,
@@ -1515,10 +1553,11 @@ class Library:
         with tempfile.TemporaryDirectory(prefix="zotero-mcp-markdown-") as directory:
             path = Path(directory) / PAPER_CHEW_MARKDOWN_FILENAME
             path.write_bytes(raw)
-            result = self.attach_file(
+            result = self._attach_file(
                 parent_key,
                 str(path),
                 title=PAPER_CHEW_MARKDOWN_FILENAME,
+                content_type_override="text/markdown",
             )
         result["content_sha256"] = digest
         result["filename"] = PAPER_CHEW_MARKDOWN_FILENAME
