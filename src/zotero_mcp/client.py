@@ -381,6 +381,17 @@ def write_result(
     return normalized
 
 
+def _not_found_error(kind: str, entity_key: str, operation_name: str) -> LibraryError:
+    finder = "get_collections" if kind == "collection" else "search_items"
+    return LibraryError(
+        NOT_FOUND,
+        f"The {kind} {entity_key} does not exist; it may have been deleted or the key is "
+        f"wrong. Search again with {finder} to get a current key.",
+        retryable=False,
+        details={"operation": operation_name, "key": entity_key},
+    )
+
+
 def operation(*, write: bool = False):
     """Serialize one operation and always clear pyzotero's mutable request state."""
 
@@ -1368,7 +1379,8 @@ class Library:
         """Patch item metadata, a note or annotation using its last-read local version.
 
         Only supplied fields change. Arrays such as tags, creators and collections
-        replace the existing array. A concurrent change fails without a retry.
+        replace the existing array. A missing item is NOT_FOUND. A concurrent change
+        fails without a retry.
         """
         if not changes or {"key", "version", "data", "library"} & changes.keys():
             raise ValueError("Provide changed fields only, without key/version/data/library.")
@@ -1377,6 +1389,12 @@ class Library:
             "key": key(item_key),
             "version": version_number(version),
         }
+        # Check existence first: PATCH on an unknown key answers 400 (or, when the changes
+        # contain itemType, creates a new item under that key) instead of 404.
+        try:
+            self.zot.item(payload["key"])
+        except ResourceNotFoundError as exc:
+            raise _not_found_error("item", payload["key"], "update_item") from exc
         if self.zot.update_item(payload) is not True:
             raise LibraryError(
                 "UNKNOWN_WRITE_RESULT",
@@ -1396,7 +1414,11 @@ class Library:
         This does not move it to Trash. Supply its last-read local version.
         """
         payload = {"key": key(item_key), "version": version_number(version)}
-        if self.zot.delete_item(payload) is not True:
+        try:
+            confirmed = self.zot.delete_item(payload)
+        except ResourceNotFoundError as exc:
+            raise _not_found_error("item", payload["key"], "delete_item") from exc
+        if confirmed is not True:
             raise RuntimeError(
                 "Zotero did not confirm deletion; check the library before retrying."
             )
@@ -1473,14 +1495,21 @@ class Library:
             ),
         ] = None,
     ) -> WriteResponse:
-        """Rename/move a collection. Use parent_collection='' to move it to the root."""
+        """Rename/move a collection. Use parent_collection='' to move it to the root.
+
+        A missing collection is NOT_FOUND.
+        """
         if name is None and parent_collection is None:
             raise ValueError("Provide a name or parent_collection to change.")
         if name is not None and not name.strip():
             raise ValueError("A collection name cannot be empty.")
         collection_key = key(collection_key)
         version_number(version)
-        current = self.zot.collection(collection_key)
+        # Check existence first: PUT on an unknown key creates a new collection under it.
+        try:
+            current = self.zot.collection(collection_key)
+        except ResourceNotFoundError as exc:
+            raise _not_found_error("collection", collection_key, "update_collection") from exc
         if current["version"] != version:
             raise LibraryError(
                 "VERSION_CONFLICT",
@@ -1509,7 +1538,11 @@ class Library:
     def delete_collection(self, collection_key: ItemKey, version: Version) -> WriteResponse:
         """Permanently delete a collection. Library items remain; child collections are also removed."""
         payload = {"key": key(collection_key), "version": version_number(version)}
-        if self.zot.delete_collection(payload) is not True:
+        try:
+            confirmed = self.zot.delete_collection(payload)
+        except ResourceNotFoundError as exc:
+            raise _not_found_error("collection", payload["key"], "delete_collection") from exc
+        if confirmed is not True:
             raise RuntimeError("Zotero did not confirm collection deletion.")
         return {
             "ok": True,

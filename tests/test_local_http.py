@@ -54,7 +54,13 @@ def test_create_note_posts_only_to_native_local_items(wire):
 
 def test_update_sends_patch_with_version_and_local_key(wire):
     library, calls, responses = wire
-    responses.extend([(200, [{"field": "title"}]), (204, "")])
+    responses.extend(
+        [
+            (200, {"key": "ABCD1234", "version": 7, "data": {}}),
+            (200, [{"field": "title"}]),
+            (204, ""),
+        ]
+    )
     assert library.update_item("ABCD1234", 7, {"title": "修改标题"})["ok"]
     request = calls[-1]
     assert request.method == "PATCH"
@@ -68,11 +74,15 @@ def test_update_sends_patch_with_version_and_local_key(wire):
 def test_stale_patch_is_not_retried(wire):
     library, calls, responses = wire
     responses.extend(
-        [(200, [{"field": "title"}]), (412, "Item has changed since specified version")]
+        [
+            (200, {"key": "ABCD1234", "version": 7, "data": {}}),
+            (200, [{"field": "title"}]),
+            (412, "Item has changed since specified version"),
+        ]
     )
     with pytest.raises(ValueError, match="current local version"):
         library.update_item("ABCD1234", 7, {"title": "new"})
-    assert [c.method for c in calls] == ["GET", "PATCH"]
+    assert [c.method for c in calls] == ["GET", "GET", "PATCH"]
 
 
 def test_delete_is_conditional_native_api(wire):

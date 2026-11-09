@@ -204,3 +204,48 @@ def test_attach_markdown_creates_once_and_never_duplicates(mcp, new_item):
     children = mcp("get_item_children", {"item_key": parent})
     assert keys(children) == [attachment]
     assert mcp("read_attachment_text", {"attachment_key": attachment})["content"] == body
+
+
+def collection_keys(mcp):
+    return {c["key"] for c in mcp("get_collections", {"limit": 100})["items"]}
+
+
+def test_writes_to_a_missing_key_are_not_found(mcp):
+    missing = "ZZZZZZZZ"
+
+    result = mcp(
+        "update_item",
+        {"item_key": missing, "version": 1, "changes": {"title": "ghost"}},
+        error=True,
+    )
+    assert result["error"]["code"] == "NOT_FOUND"
+    assert missing in result["error"]["message"]
+
+    # Zotero would create an item under this key when the PATCH carries an itemType.
+    result = mcp(
+        "update_item",
+        {
+            "item_key": missing,
+            "version": 1,
+            "changes": {"itemType": "journalArticle", "title": "ghost"},
+        },
+        error=True,
+    )
+    assert result["error"]["code"] == "NOT_FOUND"
+    gone = mcp("get_item_metadata", {"item_keys": [missing]})["items"][0]
+    assert gone["status"] == "error" and gone["error"]["code"] == "NOT_FOUND"
+
+    result = mcp("delete_item", {"item_key": missing, "version": 1}, error=True)
+    assert result["error"]["code"] == "NOT_FOUND"
+
+    # Zotero would create a collection under this key when it is PUT.
+    result = mcp(
+        "update_collection",
+        {"collection_key": missing, "version": 1, "name": "ghost"},
+        error=True,
+    )
+    assert result["error"]["code"] == "NOT_FOUND"
+    assert missing not in collection_keys(mcp)
+
+    result = mcp("delete_collection", {"collection_key": missing, "version": 1}, error=True)
+    assert result["error"]["code"] == "NOT_FOUND"
