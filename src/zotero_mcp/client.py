@@ -66,6 +66,7 @@ from zotero_mcp.presentation import (
     ReadOffset,
     ReadTag,
     ReadView,
+    TagPage,
     normalize_view,
     project_items,
 )
@@ -642,9 +643,16 @@ class Library:
         )
 
     @operation()
-    def get_tags(self, limit: ReadLimit = 100, offset: ReadOffset = 0) -> ItemPage:
-        """List tags in the configured local library."""
-        return self._page(self.zot.tags(**pagination(limit, offset)), limit, offset)
+    def get_tags(self, limit: ReadLimit = 100, offset: ReadOffset = 0) -> TagPage:
+        """List tag names in the configured local library.
+
+        Each entry in ``items`` is ``{"tag": "<name>"}``; tag type and item counts
+        are not returned.
+        """
+        names = self.zot.tags(**pagination(limit, offset))
+        # pyzotero returns plain tag-name strings, not item-like dicts.
+        entries = [{"tag": name} for name in names]
+        return self._page(entries, limit, offset, view="raw")
 
     @operation()
     def get_recent(

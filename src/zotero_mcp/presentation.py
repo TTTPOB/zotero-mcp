@@ -99,6 +99,21 @@ class ItemPage(_FieldsSetModel):
     total: int | None = None
 
 
+class TagEntry(_FieldsSetModel):
+    """One tag name, shaped like the ``{"tag": ...}`` objects on item data."""
+
+    tag: str
+
+
+class TagPage(_FieldsSetModel):
+    """A paged list of tag names (pyzotero returns names only, without tag types)."""
+
+    items: list[TagEntry] = Field(default_factory=list)
+    offset: int = 0
+    next_offset: int | None = None
+    total: int | None = None
+
+
 _VALID_VIEWS = {"summary", "metadata", "raw"}
 _YEAR_RE = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
 _ENCLOSURE_KEY_RE = re.compile(r"/items/([A-Za-z0-9]{8})(?:/|$)")

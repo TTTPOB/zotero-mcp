@@ -26,10 +26,9 @@ def entries_with(details, *names):
     return found
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in stage 3")
 def test_get_tags_lists_library_tags(mcp, seed):
     page = mcp("get_tags", {"limit": 100})
-    names = {tag if isinstance(tag, str) else tag["tag"] for tag in page["items"]}
+    names = {entry["tag"] for entry in page["items"]}
     assert {"live-seed", "live-alpha", "live-note"} <= names
     assert isinstance(page["offset"], int)
 
