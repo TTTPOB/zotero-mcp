@@ -685,8 +685,19 @@ class Library:
         for a paper's children; a summary's fulltext.candidate_attachment_key names
         its best attachment. Request metadata or raw when needed.
         """
+        collection = key(collection_key)
+        # Zotero answers /collections/{unknown key}/items/top with 200 and the whole
+        # library's top-level items, so the collection has to be checked first.
+        try:
+            self.zot.collection(collection)
+        except ResourceNotFoundError as exc:
+            raise LibraryError(
+                NOT_FOUND,
+                f"No collection with key {collection} exists. Use zotero_get_collections "
+                "to look up collection keys (an item key is not a collection key).",
+            ) from exc
         return self._page(
-            self.zot.collection_items_top(key(collection_key), **pagination(limit, offset)),
+            self.zot.collection_items_top(collection, **pagination(limit, offset)),
             limit,
             offset,
             view=view,

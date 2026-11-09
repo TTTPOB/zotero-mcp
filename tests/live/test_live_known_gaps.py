@@ -51,3 +51,28 @@ def test_adding_child_items_to_a_collection_is_rejected_before_any_write(mcp, se
     # The whole batch is refused: the valid top-level item was not written either.
     assert mcp("get_collection_items", {"collection_key": collection})["items"] == []
     assert read_item(mcp, top)["data"]["collections"] == []
+
+
+# Zotero answers reads about an unknown key with 200: the whole library for
+# /collections/{key}/items/top, and [] for /items/{key}/children.
+
+
+def error_code(result):
+    return result["error"]["code"]
+
+
+def test_get_collection_items_rejects_keys_that_are_not_collections(mcp, seed):
+    for wrong in (seed.alpha, seed.pdf, "ZZZZZZZZ"):
+        result = mcp("get_collection_items", {"collection_key": wrong}, error=True)
+        assert error_code(result) == "NOT_FOUND", wrong
+        assert "zotero_get_collections" in result["error"]["message"]
+
+
+def test_get_collection_items_of_a_deleted_collection_is_not_found(mcp, seed):
+    created = mcp("create_collection", {"name": "Live short-lived"})
+    key = created["results"][0]["key"]
+    version = mcp("get_collections", {"limit": 100})
+    version = next(c["version"] for c in version["items"] if c["key"] == key)
+    mcp("delete_collection", {"collection_key": key, "version": version})
+    result = mcp("get_collection_items", {"collection_key": key}, error=True)
+    assert error_code(result) == "NOT_FOUND"
