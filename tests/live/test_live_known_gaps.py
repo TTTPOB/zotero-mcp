@@ -109,6 +109,35 @@ def test_listing_past_the_last_child_keeps_the_real_total(mcp, seed):
     assert page["total"] == 2  # the PDF and the note, not the 1 of the existence check
 
 
+def test_export_items_rejects_child_and_unknown_keys(mcp, seed):
+    for format in ("bibtex", "ris", "csljson"):
+        for wrong in (seed.note, seed.pdf, seed.annotation):
+            result = mcp("export_items", {"item_keys": [wrong], "format": format}, error=True)
+            assert error_code(result) == "NOT_CITABLE", (format, wrong)
+            (entry,) = result["error"]["details"]["items"]
+            assert entry["key"] == wrong and entry["parent_key"]
+        result = mcp("export_items", {"item_keys": ["ZZZZZZZZ"], "format": format}, error=True)
+        assert error_code(result) == "NOT_FOUND"
+
+
+def test_export_items_fails_as_a_whole_when_one_key_is_unusable(mcp, seed):
+    result = mcp(
+        "export_items",
+        {"item_keys": [seed.alpha, seed.note, "ZZZZZZZZ"], "format": "bibtex"},
+        error=True,
+    )
+    assert error_code(result) == "NOT_CITABLE"
+    assert result["error"]["details"]["items"] == [
+        {"key": seed.note, "code": "NOT_CITABLE", "parent_key": seed.alpha},
+        {"key": "ZZZZZZZZ", "code": "NOT_FOUND"},
+    ]
+
+
+def test_export_items_accepts_duplicate_keys(mcp, seed):
+    result = mcp("export_items", {"item_keys": [seed.alpha, seed.alpha], "format": "bibtex"})
+    assert "livealpha2024" in result["content"]
+
+
 def test_get_citation_items_tells_children_from_unknown_keys(mcp, seed):
     keys_in = [seed.note, seed.pdf, seed.annotation, seed.parent, "ZZZZZZZZ", seed.alpha]
     entries = mcp("get_citation_items", {"item_keys": keys_in})["items"]

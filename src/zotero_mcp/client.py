@@ -1270,18 +1270,27 @@ class Library:
     ) -> dict[str, Any]:
         """Export up to 50 top-level items using Zotero's built-in local translators.
 
-        Child notes and attachments are not exported. BibTeX and RIS content is text;
+        Child notes and attachments are not exported: a request naming one fails as a
+        whole with NOT_CITABLE (details.items gives each key's code and parent_key), and
+        a key that does not exist fails with NOT_FOUND. BibTeX and RIS content is text;
         CSL JSON content is a parsed array of CSL objects. A CSL id is the item's
         citation key when available (otherwise an item URI), not a lookup key.
         For per-key citation data use zotero_get_citation_items.
         """
         if not 1 <= len(item_keys) <= 50:
             raise ValueError("Provide 1 to 50 item keys.")
-        result = self.zot.top(
-            itemKey=",".join(key(k) for k in item_keys), format=format, limit=len(item_keys)
-        )
+        keys = [key(k) for k in item_keys]
+        result = self.zot.top(itemKey=",".join(keys), format=format, limit=len(item_keys))
+        request = self.zot.request
+        text = request.text
+        # Zotero skips keys that /items/top does not list (children, unknown keys)
+        # without any error; its Total-Results header counts the items it exported.
+        distinct = list(dict.fromkeys(keys))
+        exported = _total_results(getattr(request, "headers", None))
+        if exported is not None and exported < len(distinct):
+            self._reject_unexportable(distinct)
         if format != "csljson":
-            return {"format": format, "content": self.zot.request.text}
+            return {"format": format, "content": text}
         # pyzotero returns the raw CSL JSON body for this format.
         if isinstance(result, (bytes, str)):
             try:
@@ -1291,6 +1300,36 @@ class Library:
                     CITATION_DATA_INVALID, "Zotero returned invalid CSL JSON."
                 ) from exc
         return {"format": format, "content": result}
+
+    def _reject_unexportable(self, item_keys: list[str]) -> None:
+        """Explain which keys /items/top skipped, then fail the whole export."""
+        known = self._lookup_items(item_keys)
+        failures = []
+        for item_key in item_keys:
+            item = known.get(item_key)
+            if item is None:
+                failures.append({"key": item_key, "code": NOT_FOUND})
+            elif item.get("data", {}).get("parentItem"):
+                code, parent_key, _ = self._child_failure(item)
+                failures.append({"key": item_key, "code": code, "parent_key": parent_key})
+        if any(f["code"] == NOT_CITABLE for f in failures):
+            fixes = ", ".join(
+                f"{f['key']} -> {f['parent_key']}" for f in failures if f["code"] == NOT_CITABLE
+            )
+            raise LibraryError(
+                NOT_CITABLE,
+                "Only top-level items can be exported; child notes, attachments and "
+                f"annotations cannot. Use the parent item key instead ({fixes}). "
+                "Nothing was exported.",
+                details={"items": failures},
+            )
+        raise LibraryError(
+            NOT_FOUND,
+            "Some keys do not exist in the library; nothing was exported: "
+            + ", ".join(f["key"] for f in failures)
+            + ".",
+            details={"items": failures},
+        )
 
     @operation(write=True)
     def add_items(self, items: ItemDataList) -> WriteResponse:
