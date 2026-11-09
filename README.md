@@ -86,6 +86,6 @@ HTTP 使用 SDK 的无状态 Streamable HTTP：每个请求独立处理，不保
 
 不安装项目的检查方式：运行 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1`。脚本把锁定的依赖导出到临时文件，在全局 uv 缓存的临时环境中执行静态检查与测试，不安装本项目。
 
-测试使用模拟库和内存 HTTP/MCP 通道，禁止访问真实网络或 Zotero 文献库。
+测试使用模拟库和内存 HTTP/MCP 通道，禁止访问真实网络或 Zotero 文献库。另有在一次性真实 Zotero 容器里运行的 live 测试，见 [真实 Zotero 环境测试](docs/live-testing.md)。
 
 依据：[Zotero 本地 API](https://www.zotero.org/support/dev/web_api/v3/local_api)、[pyzotero 本地 API](https://pyzotero.readthedocs.io/en/latest/#the-local-zotero-api)。
