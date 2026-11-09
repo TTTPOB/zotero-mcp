@@ -137,6 +137,26 @@ class ZoteroMCP(FastMCP):
             )
 
 
+INSTRUCTIONS = """\
+Tools for the user's local Zotero library. Which tool to use:
+- Find a paper: zotero_search_items with title words, author or year. Pass a DOI, DOI URL or \
+ISBN as the whole query for an exact identifier lookup (found=false means the library lacks it).
+- Cite in Word/LibreOffice: zotero_get_citation_items and use each item's uri (never a web \
+link). Pandoc/LaTeX: use citation_key and csl from the same tool, or zotero_export_items.
+- Read a paper's text: zotero_get_item_fulltext with the paper or attachment key; continue \
+with the returned attachment_key, text_revision and next_offset. zotero_find_item_fulltext \
+locates a phrase.
+- Browse: zotero_get_collections, then zotero_get_collection_items; child attachments and \
+notes come from zotero_get_item_children.
+- Edit: read the item first for its local version. zotero_update_item returns the new version for \
+the next edit. On VERSION_CONFLICT, error.details.current_version is the current version; \
+resubmit only after confirming the change still applies.
+Item keys are 8 characters (e.g. ABCD2345); collection keys are not item keys. Batch writes \
+may partially succeed: check results per entry and never resubmit successful ones. Writes \
+require local authorization via zotero-mcp authorize. Fulltext comes from Zotero's own index.\
+"""
+
+
 def build_server(
     library: Library | None = None, *, host: str = "127.0.0.1", port: int = 8000
 ) -> FastMCP:
@@ -145,12 +165,7 @@ def build_server(
     mcp = ZoteroMCP(
         library,
         "Zotero Local",
-        instructions=(
-            "Use Zotero's local library. Read metadata to obtain local versions before edits or "
-            "deletions. Never substitute cloud versions. Batch writes may partially succeed: "
-            "inspect successful/failed/pending entries before retrying. Writes require local "
-            "authorization via zotero-mcp authorize. Fulltext comes from Zotero's own index."
-        ),
+        instructions=INSTRUCTIONS,
         stateless_http=True,
         host=host,
         port=port,
