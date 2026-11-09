@@ -161,7 +161,9 @@ async def test_stateless_http_survives_requests_and_service_rebuild(library, zot
     rebuilt_transport = http.ASGITransport(app=rebuilt_app)
     async with rebuilt_app.router.lifespan_context(rebuilt_app):
         async with http.AsyncClient(transport=rebuilt_transport, base_url=BASE_URL) as client:
-            _, rebuilt_call = await _post_rpc(client, {**call, "id": 5}, session_id="legacy-session")
+            _, rebuilt_call = await _post_rpc(
+                client, {**call, "id": 5}, session_id="legacy-session"
+            )
             assert rebuilt_call["result"]["structuredContent"]["key"] == "ABCD1234"
             assert zot.client.close.call_count == 1
 
