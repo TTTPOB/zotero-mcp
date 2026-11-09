@@ -28,10 +28,12 @@ from zotero_mcp.errors import (
     CITATION_DATA_INVALID,
     CONNECTION_ERROR,
     INVALID_ARGUMENT,
+    KEY_FORMAT,
     NOT_CITABLE,
     NOT_FOUND,
     LibraryError,
     from_exception,
+    key_source,
 )
 from zotero_mcp.fulltext import (
     FulltextError,
@@ -105,7 +107,7 @@ def new_client(settings: Settings | None = None) -> Zotero:
 def key(value: str) -> str:
     value = value.upper()
     if not re.fullmatch(r"[A-Z0-9]{8}", value):
-        raise ValueError("A Zotero item or collection key must contain 8 letters/digits.")
+        raise ValueError(f"A Zotero key must be {KEY_FORMAT}; {key_source('item_key')}.")
     return value
 
 
@@ -1153,7 +1155,7 @@ class Library:
     @operation()
     def export_items(
         self,
-        item_keys: Annotated[list[str], Field(description="1–50 Zotero item keys to export.")],
+        item_keys: Annotated[ItemKeyList, Field(description="1–50 Zotero item keys to export.")],
         format: Annotated[
             Literal["bibtex", "ris", "csljson"],
             Field(description="Zotero export format: BibTeX, RIS, or CSL JSON."),

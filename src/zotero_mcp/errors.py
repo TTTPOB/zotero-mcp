@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import httpx2
+from pydantic import ValidationError
 from pyzotero import (
     ConflictError,
     CouldNotReachURLError,
@@ -108,30 +110,150 @@ def _unwrap(exc: BaseException) -> BaseException:
     return current
 
 
-def _validation_details(exc: BaseException) -> Any:
-    """Extract JSON-safe pydantic details without coupling core errors to MCP."""
-    errors = getattr(exc, "errors", None)
-    if not callable(errors):
-        return None
-    try:
-        return errors(include_context=False)
-    except (TypeError, ValueError):
-        try:
-            return errors()
-        except Exception:  # pragma: no cover - defensive for third-party validators
-            return None
-
-
 LIMIT_MESSAGE = (
     "limit must be between 1 and 100. To read more, request pages of at most 100 and pass "
     "the returned next_offset as offset until next_offset is null."
 )
 
+# At most this many validation problems are spelled out; the message states the total.
+_MAX_REPORTED_PROBLEMS = 3
+_MAX_DETAIL_ENTRIES = 5
+# pydantic error type -> (comparison symbol, ctx key holding the bound)
+_RANGE_ERRORS = {
+    "greater_than": (">", "gt"),
+    "greater_than_equal": (">=", "ge"),
+    "less_than": ("<", "lt"),
+    "less_than_equal": ("<=", "le"),
+}
+_KEY_ERRORS = {"string_type", "string_too_long", "string_too_short", "string_pattern_mismatch"}
+KEY_FORMAT = "an 8-character Zotero key (letters and digits, e.g. ABCD2345), not a URI or title"
+_VALUE_TYPES = {
+    str: "a string",
+    int: "an integer",
+    float: "a number",
+    bool: "a boolean",
+    list: "a list",
+    dict: "an object",
+    type(None): "null",
+}
 
-def _is_limit_violation(details: Any) -> bool:
-    return isinstance(details, list) and any(
-        isinstance(entry, dict) and list(entry.get("loc", ())) == ["limit"] for entry in details
-    )
+
+def _param_path(loc: tuple[Any, ...]) -> str:
+    """Render a pydantic location as item_keys[3] or options.view."""
+    path = ""
+    for part in loc:
+        if isinstance(part, int):
+            path += f"[{part}]"
+        else:
+            path += f".{part}" if path else str(part)
+    return path or "arguments"
+
+
+def _param_name(loc: tuple[Any, ...]) -> str:
+    return next((part for part in reversed(loc) if isinstance(part, str)), "")
+
+
+def _is_key_param(name: str) -> bool:
+    return re.search(r"(^|_)keys?$", name) is not None
+
+
+def key_source(name: str) -> str:
+    """Name the tool that returns keys for a parameter."""
+    if "collection" in name:
+        return "get collection keys from zotero_get_collections"
+    if "attachment" in name:
+        return "get attachment keys from zotero_get_item_children"
+    return "get item keys from zotero_search_items"
+
+
+def _value_type(value: Any) -> str:
+    return _VALUE_TYPES.get(type(value), type(value).__name__)
+
+
+def _short(value: Any, limit: int = 40) -> str:
+    """Echo a scalar input briefly; never echo containers or long strings in full."""
+    if not isinstance(value, (str, int, float, bool)) and value is not None:
+        return _value_type(value)
+    text = repr(value)
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def _format_problem(entry: dict[str, Any]) -> str:
+    """Turn one pydantic error (type/loc/ctx) into a short, actionable clause."""
+    kind = str(entry.get("type", ""))
+    loc = tuple(entry.get("loc", ()))
+    ctx = entry.get("ctx") or {}
+    value = entry.get("input")
+    path = _param_path(loc)
+    name = _param_name(loc)
+
+    if kind == "missing":
+        return f"{path} is required"
+    if name == "limit" and kind in _RANGE_ERRORS:
+        return LIMIT_MESSAGE.rstrip(".")
+    if _is_key_param(name):
+        if kind in _KEY_ERRORS:
+            return f"{path} must be {KEY_FORMAT}; {key_source(name)}"
+        if kind == "list_type":
+            return (
+                f'{path} must be a list of Zotero keys, e.g. ["ABCD2345"]; got {_value_type(value)}'
+            )
+    if kind == "too_long" and "max_length" in ctx:
+        got = ctx.get("actual_length") or (len(value) if hasattr(value, "__len__") else "more")
+        return (
+            f"{path} accepts at most {ctx['max_length']} entries, got {got}; "
+            "split the call into smaller batches"
+        )
+    if kind == "too_short" and "min_length" in ctx:
+        count = ctx["min_length"]
+        return f"{path} needs at least {count} {'entry' if count == 1 else 'entries'}"
+    if kind == "list_type":
+        hint = '; wrap a single value in a list, e.g. ["value"]' if isinstance(value, str) else ""
+        return f"{path} must be a list, got {_value_type(value)}{hint}"
+    if kind == "string_type":
+        return f"{path} must be a string, got {_value_type(value)}"
+    if kind == "string_too_long" and "max_length" in ctx:
+        got = f", got {len(value)}" if isinstance(value, str) else ""
+        return f"{path} must be at most {ctx['max_length']} characters{got}"
+    if kind == "string_too_short" and "min_length" in ctx:
+        return f"{path} must be at least {ctx['min_length']} characters"
+    if kind == "literal_error" and "expected" in ctx:
+        return f"{path} must be {ctx['expected']}; got {_short(value)}"
+    if kind in {"int_parsing", "int_type", "int_from_float"}:
+        return f"{path} must be an integer, got {_short(value)}"
+    if kind in {"float_parsing", "float_type"}:
+        return f"{path} must be a number, got {_short(value)}"
+    if kind in {"bool_parsing", "bool_type"}:
+        return f"{path} must be true or false, got {_short(value)}"
+    if kind == "dict_type":
+        return f"{path} must be an object, got {_value_type(value)}"
+    if kind in _RANGE_ERRORS:
+        symbol, bound_key = _RANGE_ERRORS[kind]
+        return f"{path} must be {symbol} {ctx.get(bound_key, '?')}, got {_short(value)}"
+    if kind in {"extra_forbidden", "unexpected_keyword_argument"}:
+        return f"{path} is not a supported parameter"
+    return f"{path}: {entry.get('msg', 'invalid value')}".rstrip(".")
+
+
+def format_validation_error(exc: ValidationError) -> tuple[str, list[dict[str, Any]]]:
+    """Summarize a pydantic ValidationError without echoing its input or doc URLs.
+
+    Returns the message and JSON-safe details (type, loc, msg) for the first few problems.
+    """
+    entries = exc.errors(include_url=False, include_context=True, include_input=True)
+    clauses = [_format_problem(entry) for entry in entries[:_MAX_REPORTED_PROBLEMS]]
+    total = len(entries)
+    if total == 1:
+        message = f"{clauses[0]}."
+    else:
+        listed = "; ".join(clauses)
+        extra = f"; {total - len(clauses)} more not shown" if total > len(clauses) else ""
+        message = f"{total} invalid arguments: {listed}{extra}."
+    details = [
+        {"type": entry["type"], "loc": list(entry["loc"]), "msg": entry["msg"]}
+        for entry in entries[:_MAX_DETAIL_ENTRIES]
+    ]
+    return message, details
 
 
 def from_exception(
@@ -235,18 +357,18 @@ def from_exception(
             details={"operation": operation} if operation else None,
         )
 
+    if isinstance(original, ValidationError):
+        message, details = format_validation_error(original)
+        return LibraryError(INVALID_ARGUMENT, message, retryable=False, details=details)
+
     message = str(original).strip()
     if "no indexed attachment" in message.lower() or "index the attachment" in message.lower():
         return no_index_error(message)
     if isinstance(original, (TypeError, ValueError, KeyError, IndexError)):
-        details = _validation_details(original)
-        if _is_limit_violation(details):
-            message = LIMIT_MESSAGE
         return LibraryError(
             INVALID_ARGUMENT,
             message or "The supplied arguments are invalid.",
             retryable=False,
-            details=details,
         )
 
     return LibraryError(
@@ -276,6 +398,7 @@ __all__ = [
     "UNAUTHORIZED",
     "UNSUPPORTED_VERSION",
     "VERSION_CONFLICT",
+    "format_validation_error",
     "from_exception",
     "no_index_error",
 ]
