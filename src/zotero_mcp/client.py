@@ -638,6 +638,27 @@ class Library:
             entries.append(entry)
         return {"items": entries}
 
+    def _require_item(self, item_key: str) -> None:
+        """Raise NOT_FOUND unless an item with this key exists.
+
+        Zotero answers /items/{key}/children with 200 and [] for any key, so an empty
+        list cannot tell "no children" from "no such item". The check runs after the
+        listing, so the listing's pagination state (headers, links) is put back.
+        """
+        zot = self.zot
+        request, links = getattr(zot, "request", None), zot.links
+        try:
+            zot.item(item_key)
+        except ResourceNotFoundError as exc:
+            raise LibraryError(
+                NOT_FOUND,
+                f"No item with key {item_key} exists in the library. Check the key "
+                "(a collection key is not an item key; zotero_get_collections lists "
+                "collection keys).",
+            ) from exc
+        finally:
+            zot.request, zot.links = request, links
+
     @operation()
     def get_item_children(
         self,
@@ -652,12 +673,11 @@ class Library:
         ] = "summary",
     ) -> ItemPage:
         """List an item's child attachments, notes or annotations."""
-        return self._page(
-            self.zot.children(key(item_key), **pagination(limit, offset)),
-            limit,
-            offset,
-            view=view,
-        )
+        parent = key(item_key)
+        children = self.zot.children(parent, **pagination(limit, offset))
+        if not children:
+            self._require_item(parent)
+        return self._page(children, limit, offset, view=view)
 
     @operation()
     def get_collections(self, limit: ReadLimit = 25, offset: ReadOffset = 0) -> ItemPage:
@@ -753,9 +773,12 @@ class Library:
     ) -> ItemPage:
         """Read notes, optionally restricted to a parent item."""
         params = {**pagination(limit, offset), "itemType": "note"}
-        items = (
-            self.zot.children(key(parent_key), **params) if parent_key else self.zot.items(**params)
-        )
+        if not parent_key:
+            return self._page(self.zot.items(**params), limit, offset, view=view)
+        parent = key(parent_key)
+        items = self.zot.children(parent, **params)
+        if not items:
+            self._require_item(parent)
         return self._page(items, limit, offset, view=view)
 
     @operation()
@@ -772,9 +795,10 @@ class Library:
         ] = "metadata",
     ) -> ItemPage:
         """Read Zotero reader annotations belonging to an attachment."""
-        items = self.zot.children(
-            key(attachment_key), itemType="annotation", **pagination(limit, offset)
-        )
+        attachment = key(attachment_key)
+        items = self.zot.children(attachment, itemType="annotation", **pagination(limit, offset))
+        if not items:
+            self._require_item(attachment)
         return self._page(items, limit, offset, view=view)
 
     @staticmethod

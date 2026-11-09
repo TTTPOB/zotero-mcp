@@ -76,3 +76,34 @@ def test_get_collection_items_of_a_deleted_collection_is_not_found(mcp, seed):
     mcp("delete_collection", {"collection_key": key, "version": version})
     result = mcp("get_collection_items", {"collection_key": key}, error=True)
     assert error_code(result) == "NOT_FOUND"
+
+
+def test_empty_collection_and_childless_item_are_still_empty_lists(mcp, seed, new_item):
+    assert mcp("get_collection_items", {"collection_key": seed.child})["items"] == []
+    lonely, _ = new_item()
+    for name, arguments in (
+        ("get_item_children", {"item_key": lonely}),
+        ("get_notes", {"parent_key": lonely}),
+        ("get_annotations", {"attachment_key": seed.text}),
+    ):
+        page = mcp(name, arguments)
+        assert page["items"] == [], name
+        assert page["total"] == 0, name
+
+
+def test_child_listings_reject_unknown_keys(mcp, seed):
+    for name, argument in (
+        ("get_item_children", "item_key"),
+        ("get_notes", "parent_key"),
+        ("get_annotations", "attachment_key"),
+    ):
+        for wrong in ("ZZZZZZZZ", seed.parent):  # unknown key; a collection key
+            result = mcp(name, {argument: wrong}, error=True)
+            assert error_code(result) == "NOT_FOUND", (name, wrong)
+            assert wrong in result["error"]["message"]
+
+
+def test_listing_past_the_last_child_keeps_the_real_total(mcp, seed):
+    page = mcp("get_item_children", {"item_key": seed.alpha, "offset": 50})
+    assert page["items"] == []
+    assert page["total"] == 2  # the PDF and the note, not the 1 of the existence check
