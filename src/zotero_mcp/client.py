@@ -1347,7 +1347,8 @@ class Library:
         """Create 1 to 50 items, notes or annotations from Zotero item-data objects.
 
         Use zotero_get_item_schema to check fields. Child notes/annotations need
-        parentItem. Returns each successful and failed batch entry; a batch may
+        parentItem. Unknown field names reject the whole batch (INVALID_ARGUMENT) before
+        anything is written. Returns each successful and failed batch entry; a batch may
         partially succeed. Never resubmit successful entries.
         """
         if not 1 <= len(items) <= 50:
@@ -1359,6 +1360,9 @@ class Library:
                 raise ValueError(
                     "Pass new item-data objects; use zotero_update_item to change existing items."
                 )
+        # Zotero silently drops unknown properties on create, so check the field names
+        # first (as update_item does). This rejects the whole batch before any write.
+        self.zot.check_items(items)
         return write_result(
             self.zot.create_items(copy.deepcopy(items)),
             input_count=len(items),
@@ -1601,7 +1605,13 @@ class Library:
                 payload = error.as_dict()["error"]
                 result["ok"] = False
                 status = "unknown" if error.code == "UNKNOWN_WRITE_RESULT" else "failed"
-                result["status"] = status if status == "unknown" else "partial"
+                if status == "unknown":
+                    result["status"] = "unknown"
+                elif any(r["status"] in {"success", "unchanged"} for r in result["results"]):
+                    result["status"] = "partial"
+                else:
+                    # Nothing was written or confirmed; later keys stay pending.
+                    result["status"] = "failed"
                 result["unknown" if status == "unknown" else "failed"][item_key] = payload
                 result["results"].append(
                     {

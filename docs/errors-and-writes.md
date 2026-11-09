@@ -22,7 +22,7 @@
 
 当前稳定代码：
 
-- `INVALID_ARGUMENT`：参数、输入字段或 MCP 输入校验不通过。`message` 只有一两句话，写明参数路径（如 `item_keys[3]`）、问题和改法；多个问题时列出前 3 条并注明总数。`details` 是前 5 条的 `type`、`loc`、`msg`，不回显输入值，也不带 pydantic 文档链接。`search_items` 的 `item_type` 不是 Zotero 已知类型时同样返回此码，见 [ADR 0006](adr/0006-short-argument-errors.md)。
+- `INVALID_ARGUMENT`：参数、输入字段或 MCP 输入校验不通过。`message` 只有一两句话，写明参数路径（如 `item_keys[3]`）、问题和改法；多个问题时列出前 3 条并注明总数。`details` 是前 5 条的 `type`、`loc`、`msg`，不回显输入值，也不带 pydantic 文档链接。`search_items` 的 `item_type` 不是 Zotero 已知类型时同样返回此码，见 [ADR 0006](adr/0006-short-argument-errors.md)。 `add_items` 和 `update_item` 都在写入前拒绝未知字段名，`add_items` 整批不写；校验用 Zotero 所有条目类型的字段并集，不检查字段是否属于该条目类型。
 - `NOT_FOUND`：条目、集合或附件不存在；`get_collection_items` 传入不存在的集合 key 也返回它，不会退回整库条目；`get_item_children`、`get_notes`（指定父条目时）、`get_annotations` 传入不存在的 key（包括集合 key）也返回它，而不是空列表。写入工具 `update_item`、`delete_item`、`update_collection`、`delete_collection` 对不存在的 key 也返回它，`message` 带上 key 并建议重新搜索；其中 `update_item` 和 `update_collection` 会先确认对象存在再写入，避免 Zotero 按不存在的 key 新建条目或集合。
 - `NOT_CITABLE`：条目不能作为引用。`get_citation_items` 对子笔记、子附件、批注在该项上附带 `parent_key`（改用父条目），对独立笔记/附件不带；`export_items` 请求含子条目时也返回它（整个调用失败，`details.items` 逐项列出 `key`、`code`、`parent_key`）。
 - `NO_INDEX`：通用的无索引错误；全文工具使用更具体的 `FULLTEXT_NOT_INDEXED`。
@@ -58,6 +58,8 @@
   "pending": ["THIRD003"]
 }
 ```
+
+写工具结果的 `status` 为 `failed`（没有任何一项成功或未变化，例如父条目不存在、条目类型未知）时，MCP 结果设 `isError: true`，`structuredContent` 不变，仍可读取逐项结果；`partial` 保持 `isError: false`，`unknown` 同样是 `isError: true`。批量标签和集合归属修改在第一个 key 就失败时也是 `failed`，其余输入为 `pending`。
 
 每个结果的 `status` 只有 `success`、`unchanged`、`failed`、`pending` 或 `unknown`。`pending` 只用于本地批量循环明确尚未调用的输入；上游创建响应缺少 index 时必须使用 `unknown`，因为无法证明该输入未执行。此时 `error.code` 为 `UNKNOWN_WRITE_RESULT`、`retryable` 为 false。`input_index` 指向原始输入位置，`key` 在 Zotero 返回创建 key 或输入本来带 key 时保留。批次可以部分成功，不要重放已成功项或整个批次。
 

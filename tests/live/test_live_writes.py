@@ -197,7 +197,9 @@ def test_attach_markdown_creates_once_and_never_duplicates(mcp, new_item):
     assert same["ok"] and same["attachment_key"] == attachment
     assert same["unchanged"] == [attachment]
 
-    different = mcp("attach_markdown", {"parent_key": parent, "content": "# Title\n\nother"})
+    different = mcp(
+        "attach_markdown", {"parent_key": parent, "content": "# Title\n\nother"}, error=True
+    )
     assert different["ok"] is False
     assert different["error"]["code"] == "ATTACHMENT_CONTENT_CONFLICT"
 
@@ -249,3 +251,37 @@ def test_writes_to_a_missing_key_are_not_found(mcp):
 
     result = mcp("delete_collection", {"collection_key": missing, "version": 1}, error=True)
     assert result["error"]["code"] == "NOT_FOUND"
+
+
+def test_batch_with_every_entry_failed_is_an_mcp_error(mcp):
+    # Nothing was written, so isError must be true; per-entry results stay readable.
+    result = mcp(
+        "add_items", {"items": [{"itemType": "nonsense"}, {"itemType": "alsonope"}]}, error=True
+    )
+    assert result["ok"] is False and result["status"] == "failed"
+    assert [entry["status"] for entry in result["results"]] == ["failed", "failed"]
+
+    result = mcp("create_note", {"parent_key": "ZZZZZZZZ", "text": "orphan"}, error=True)
+    assert result["ok"] is False and result["status"] == "failed"
+    assert result["results"][0]["status"] == "failed"
+
+    result = mcp("batch_update_tags", {"item_keys": ["ZZZZZZZZ"], "add": ["x"]}, error=True)
+    assert result["status"] == "failed"
+    assert result["results"][0]["error"]["code"] == "NOT_FOUND"
+
+
+def test_add_items_rejects_unknown_fields_before_writing(mcp):
+    result = mcp(
+        "add_items",
+        {
+            "items": [
+                {"itemType": "journalArticle", "title": "Live unknown field ok"},
+                {"itemType": "journalArticle", "title": "Live unknown field", "bogus": "x"},
+            ]
+        },
+        error=True,
+    )
+    assert result["error"]["code"] == "INVALID_ARGUMENT"
+    assert "bogus" in result["error"]["message"]
+    found = mcp("search_items", {"query": "Live unknown field"})
+    assert found["items"] == []

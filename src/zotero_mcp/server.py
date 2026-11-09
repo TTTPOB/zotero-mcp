@@ -96,7 +96,12 @@ class ZoteroMCP(FastMCP):
                 # including model defaults added during output validation.
                 structured = result[1]
                 text = json.dumps(structured, ensure_ascii=False, separators=(",", ":"))
-                if structured.get("status") == "unknown":
+                status = structured.get("status")
+                # A write that failed entirely must not look like a success to clients that
+                # only read isError; structuredContent still carries the per-item results.
+                if status == "unknown" or (
+                    status == "failed" and name.removeprefix("zotero_") in WRITE_TOOLS
+                ):
                     return CallToolResult(
                         content=[TextContent(type="text", text=text)],
                         structuredContent=structured,

@@ -42,14 +42,17 @@ def wire():
 
 def test_create_note_posts_only_to_native_local_items(wire):
     library, calls, responses = wire
-    responses.append((200, {"success": {"0": "NOTE0001"}, "failed": {}}))
+    responses.extend(
+        [(200, [{"field": "title"}]), (200, {"success": {"0": "NOTE0001"}, "failed": {}})]
+    )
     assert library.create_note("ABCD1234", "中文")["ok"]
-    assert len(calls) == 1
-    assert calls[0].method == "POST"
-    assert calls[0].url.path == "/api/users/0/items"
-    assert calls[0].headers["Zotero-Server-ID"] == "server-1"
-    assert calls[0].headers["Zotero-API-Key"] == "local-test-key"
-    assert json.loads(calls[0].content)[0]["parentItem"] == "ABCD1234"
+    # The first call reads the field list used to reject unknown fields; only one POST follows.
+    assert [c.method for c in calls] == ["GET", "POST"]
+    assert calls[0].url.path == "/api/itemFields"
+    assert calls[1].url.path == "/api/users/0/items"
+    assert calls[1].headers["Zotero-Server-ID"] == "server-1"
+    assert calls[1].headers["Zotero-API-Key"] == "local-test-key"
+    assert json.loads(calls[1].content)[0]["parentItem"] == "ABCD1234"
 
 
 def test_update_sends_patch_with_version_and_local_key(wire):
@@ -110,10 +113,11 @@ def test_native_batch_partial_failure_is_preserved(wire):
             {"success": {"0": "ABCD1234"}, "failed": {"1": {"code": 400, "message": "bad field"}}},
         )
     )
-    result = library.add_items([{"itemType": "book"}, {"itemType": "book", "bad": True}])
+    responses.insert(0, (200, [{"field": "title"}]))
+    result = library.add_items([{"itemType": "book"}, {"itemType": "book", "title": "bad"}])
     assert result["ok"] is False
     assert result["failed"]["1"]["code"] == 400
-    assert len(calls) == 1
+    assert [c.method for c in calls] == ["GET", "POST"]
 
 
 def test_search_then_metadata_does_not_leak_query(wire):

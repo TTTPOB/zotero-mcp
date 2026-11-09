@@ -46,7 +46,7 @@
 
 | 工具 | 用途 |
 | --- | --- |
-| `add_items` | 创建 1–50 个条目、笔记或批注，传入 Zotero item-data 对象 |
+| `add_items` | 创建 1–50 个条目、笔记或批注，传入 Zotero item-data 对象；含未知字段名时整批拒绝 |
 | `update_item` | 按 key、version 修改指定字段；适用于笔记、批注 |
 | `delete_item` | 按 key、version 永久删除条目及其子项 |
 | `create_note` | 创建附属于文献的子笔记；默认转义纯文本 |
@@ -62,7 +62,7 @@
 
 `update_item` 只更改你传入的字段，但数组字段会整体替换。因此，增删标签优先使用 `batch_update_tags`，调整集合归属优先使用 `manage_collection_items`。
 
-批量标签或集合归属修改遇到错误时会停止。`results` 按输入索引和 key 关联逐项结果，旧的 `updated`、`unchanged`、`failed`、`pending` 等聚合字段继续保留。批量创建遵循 Zotero 的逐条结果，成功和失败可同时存在；响应未确认的输入需要检查库状态，不能当作未执行直接重放。
+批量标签或集合归属修改遇到错误时会停止。`results` 按输入索引和 key 关联逐项结果，旧的 `updated`、`unchanged`、`failed`、`pending` 等聚合字段继续保留。批量创建遵循 Zotero 的逐条结果，成功和失败可同时存在；全部失败时 `status` 为 `failed` 且 MCP `isError=true`（`results` 仍可读），部分成功时 `isError=false`；响应未确认的输入需要检查库状态，不能当作未执行直接重放。
 
 附件上传若在创建条目之后失败，保留 `attachment_key` 和 `stage`。先检查该附件，避免重新调用产生重复项。工具级错误使用稳定的 `code`、`message`、`retryable` 和 MCP `isError=true`；部分批量结果保留已完成项，恢复方法见 [错误与写入](errors-and-writes.md)。`attach_markdown` 固定使用 `paper-chew-fulltext.md`，同内容附件返回 `unchanged`，同名异内容、多同名或已有附件无法读取时不会创建第二份，也不会自动删除。
 
