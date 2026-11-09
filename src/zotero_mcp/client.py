@@ -3,6 +3,7 @@
 import copy
 import hashlib
 import html
+import json
 import mimetypes
 import os
 import re
@@ -17,13 +18,17 @@ from urllib.parse import parse_qs, unquote, urlparse
 from pydantic import Field
 from pyzotero import ResourceNotFoundError, Zotero
 
+from zotero_mcp.citation_models import CitationItemsResult
 from zotero_mcp.config import Settings, load_auth
 from zotero_mcp.errors import (
     ATTACHMENT_CONTENT_CONFLICT,
     ATTACHMENT_CONTENT_UNAVAILABLE,
     ATTACHMENT_NAME_AMBIGUOUS,
+    CITATION_DATA_INVALID,
     CONNECTION_ERROR,
     INVALID_ARGUMENT,
+    NOT_CITABLE,
+    NOT_FOUND,
     LibraryError,
     from_exception,
 )
@@ -933,6 +938,84 @@ class Library:
             "fields": self.zot.item_type_fields(item_type),
             "creator_types": self.zot.item_creator_types(item_type),
         }
+
+    @operation()
+    def get_citation_items(
+        self,
+        item_keys: Annotated[
+            ItemKeyList,
+            Field(description="1–50 Zotero item keys; results retain input order and duplicates."),
+        ],
+    ) -> CitationItemsResult:
+        """Get per-key citation data for top-level bibliographic items.
+
+        Use uri for Zotero Word/LibreOffice fields, select_link for note links, and
+        citation_key plus csl for Pandoc/LaTeX. Never use links.alternate.href (a web
+        page URL) as a citation URI. CSL is unchanged; its id is not a lookup key.
+        """
+        if not 1 <= len(item_keys) <= 50:
+            raise ValueError("Provide 1 to 50 item keys.")
+        keys = [key(k) for k in item_keys]
+        returned = self.zot.top(itemKey=",".join(keys), include="data,csljson", limit=len(keys))
+        by_key = {item["key"]: item for item in returned}
+        entries = []
+        for index, item_key in enumerate(keys):
+            entry = {"index": index, "key": item_key}
+            try:
+                item = by_key.get(item_key)
+                if item is None:
+                    raise LibraryError(
+                        NOT_FOUND,
+                        "Item is missing from /items/top or is a child note/attachment "
+                        "that cannot be cited.",
+                    )
+                data = item.get("data", {})
+                item_type = data.get("itemType", "")
+                if item_type in {"note", "attachment", "annotation"}:
+                    raise LibraryError(NOT_CITABLE, f"A standalone {item_type} cannot be cited.")
+                csl = item.get("csljson")
+                if isinstance(csl, str):
+                    try:
+                        csl = json.loads(csl)
+                    except ValueError as exc:
+                        raise LibraryError(
+                            CITATION_DATA_INVALID, "Zotero returned invalid CSL JSON."
+                        ) from exc
+                if isinstance(csl, dict):
+                    csl = [csl]
+                if not isinstance(csl, list) or len(csl) != 1 or not isinstance(csl[0], dict):
+                    raise LibraryError(
+                        CITATION_DATA_INVALID, "Expected exactly one CSL object for this item."
+                    )
+                csl = csl[0]
+                library = item.get("library", {})
+                library_type = library.get("type")
+                library_id = library.get("id")
+                if library_type not in {"user", "group"} or library_id is None:
+                    raise LibraryError(
+                        CITATION_DATA_INVALID,
+                        "Zotero returned missing or unsupported library data.",
+                    )
+                scope = "users" if library_type == "user" else "groups"
+                select_scope = "library" if library_type == "user" else f"groups/{library_id}"
+                citation_key = data.get("citationKey")
+                if not isinstance(citation_key, str) or not citation_key.strip():
+                    citation_key = csl.get("citation-key")
+                if not isinstance(citation_key, str) or not citation_key.strip():
+                    citation_key = None
+                entry.update(
+                    status="ok",
+                    uri=f"http://zotero.org/{scope}/{library_id}/items/{item_key}",
+                    select_link=f"zotero://select/{select_scope}/items/{item_key}",
+                    citation_key=citation_key,
+                    item_type=item_type,
+                    title=data.get("title", ""),
+                    csl=csl,
+                )
+            except LibraryError as exc:
+                entry.update(status="error", error={"code": exc.code, "message": exc.message})
+            entries.append(entry)
+        return {"items": entries}
 
     @operation()
     def export_items(

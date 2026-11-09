@@ -19,7 +19,8 @@
 | `find_item_fulltext` | 在指定附件的索引文本中查找字面量，返回附近片段和原文字符位置 |
 | `read_attachment_text` | 从安全的 Markdown/text 附件读取原始 UTF-8 文件内容，不使用 Zotero 索引 |
 | `get_item_schema` | 从本地 Zotero 查询条目类型、字段和作者类型 |
-| `export_items` | 通过本地 Zotero 导出 BibTeX、RIS、CSL JSON |
+| `export_items` | 通过本地 Zotero 导出顶层条目的 BibTeX、RIS、CSL JSON，不包含子笔记/附件 |
+| `get_citation_items` | 按输入 key 获取规范引用 URI、选择链接、citation key 和 CSL JSON |
 
 搜索、最近条目、集合条目、子条目列表默认使用 `view=summary`；`view=metadata` 保留语义元数据，`view=raw` 返回原生记录。笔记和批注列表默认 metadata，保留正文。视图不截断完整标题、不静默隐藏独立附件，也不从附件存在推断索引可读。
 
@@ -30,6 +31,10 @@
 全文工具接受论文或附件 key。传父文献时透明选择附件；无法确定时返回候选清单，再指定 `attachment_key`。续读传回实际附件 key 和 `text_revision`，文本改变会要求重新开始。偏移以 0 起始 Unicode code point 计数，`max_characters` 为 1–50,000。索引页数和本次返回的文本范围分别表达，不表示 Agent 已通读附件。
 
 `find_item_fulltext` 只查指定附件，使用不区分大小写的字面量匹配，返回片段及原文字符位置，不进行全库扫描。`read_attachment_text` 则读取附件文件本身：正常接受 `text/markdown` 或 `text/plain` 以及 `.md`、`.markdown`、`.txt` 扩展名；兼容旧的 `.md/.markdown` generic MIME，但仍要求原始 bytes 通过二进制签名、UTF-8 和 50 MiB 检查。它返回原始 bytes 的 SHA-256，不使用索引的 `text_revision`。详见 [读取视图](read-views.md) 与 [全文阅读](fulltext-reading.md)。
+
+每次 `get_citation_items` 接受 1–50 个 key，按输入顺序（包括重复 key）返回逐项状态。Word/LibreOffice 的 Zotero 字段使用 `uri`（必须以 `http://zotero.org/` 开头）；笔记链接使用 `select_link`，Pandoc/LaTeX 使用 `citation_key` 和 `csl`。不要把 `links.alternate.href` 网页地址作为引用 URI。没有 citation key 时返回 null，不自行生成；CSL 对象保持原样，其 `id` 可能是 citation key，不是查询用的条目 key。缺失 key 或子笔记/附件返回 `NOT_FOUND`，独立笔记/附件/批注返回 `NOT_CITABLE`，无效 CSL 数据返回 `CITATION_DATA_INVALID`。
+
+`export_items` 同样接受 1–50 个 key，只导出顶层条目，不附带子笔记/附件。CSL JSON 中的 `id` 在 Zotero 有 citation key 时使用该值，否则为条目 URI；需要按 key 可靠关联引用数据时使用 `get_citation_items`。
 
 ## 写入
 

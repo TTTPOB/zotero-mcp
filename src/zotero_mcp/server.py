@@ -25,6 +25,7 @@ READ_TOOLS = (
     "read_attachment_text",
     "get_item_schema",
     "export_items",
+    "get_citation_items",
 )
 WRITE_TOOLS = (
     "add_items",

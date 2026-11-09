@@ -34,6 +34,8 @@ from pyzotero import (
 # These values are part of the tool contract. Keep them stable when messages change.
 INVALID_ARGUMENT = "INVALID_ARGUMENT"
 NOT_FOUND = "NOT_FOUND"
+NOT_CITABLE = "NOT_CITABLE"
+CITATION_DATA_INVALID = "CITATION_DATA_INVALID"
 NO_INDEX = "NO_INDEX"
 UNAUTHORIZED = "UNAUTHORIZED"
 VERSION_CONFLICT = "VERSION_CONFLICT"
@@ -251,6 +253,8 @@ __all__ = [
     "LibraryError",
     "NO_INDEX",
     "NOT_FOUND",
+    "NOT_CITABLE",
+    "CITATION_DATA_INVALID",
     "UNKNOWN_ERROR",
     "UNKNOWN_WRITE_RESULT",
     "UNAUTHORIZED",

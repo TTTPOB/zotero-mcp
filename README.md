@@ -8,7 +8,7 @@
 
 - 检索元数据、标签及 Zotero 已索引的全文；读取条目、集合、笔记、批注。
 - 创建、修改、删除条目；管理标签和集合；创建子笔记；导入本地附件。
-- 通过 Zotero 导出 BibTeX、RIS、CSL JSON。
+- 通过 Zotero 导出 BibTeX、RIS、CSL JSON；用 `get_citation_items` 获取 Word/LibreOffice、Pandoc/LaTeX 和笔记所需的逐项引用数据。
 
 批注使用 `zotero_add_items` 创建，通过 `zotero_update_item` 修改，通过 `zotero_delete_item` 删除。传入 Zotero 的批注字段，包括 `parentItem` 和 `annotationPosition`。
 
