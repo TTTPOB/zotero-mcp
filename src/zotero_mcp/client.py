@@ -67,6 +67,7 @@ from zotero_mcp.fulltext_models import (
     FulltextQuery,
     FulltextRevision,
 )
+from zotero_mcp.identifiers import Identifier, matching_field, parse_identifier
 from zotero_mcp.models import ItemDataList, ItemKey, ItemKeyList, Version, WriteResponse
 from zotero_mcp.presentation import (
     ItemMetadataBatch,
@@ -220,6 +221,10 @@ def page(
     if total is not None:
         result["total"] = total
     return result
+
+
+# Upper bound on Zotero hits examined per identifier query (100 per request).
+IDENTIFIER_CANDIDATE_CAP = 500
 
 
 def _item_tags(item: Mapping[str, Any] | None) -> set[str]:
@@ -548,7 +553,12 @@ class Library:
     def search_items(
         self,
         query: Annotated[
-            str, Field(description="Search text; omit only when supplying valid tags.")
+            str,
+            Field(
+                description="Search text; omit only when supplying valid tags. A DOI "
+                "(10.x/..., doi:..., https://doi.org/...) or ISBN-10/13 (hyphens optional) "
+                "as the whole query returns only items whose DOI/ISBN equals it."
+            ),
         ] = "",
         tags: Annotated[
             list[ReadTag] | None,
@@ -559,13 +569,13 @@ class Library:
         item_type: Annotated[
             str | None,
             Field(
-                description="Native item-type filter; -attachment excludes attachment hits. Empty or blank counts as not provided."
+                description="Native item-type filter; -attachment excludes attachment hits. Empty or blank counts as not provided. Not needed for DOI/ISBN queries."
             ),
         ] = None,
         qmode: Annotated[
             Literal["titleCreatorYear", "everything"],
             Field(
-                description="For DOI/ISBN/URL or non-title fields, use everything with item_type='-attachment'; verify the returned doi."
+                description="titleCreatorYear matches title, creators and year; everything also matches other fields, notes and attachment text. Ignored for DOI/ISBN queries."
             ),
         ] = "titleCreatorYear",
         limit: ReadLimit = 25,
@@ -573,7 +583,7 @@ class Library:
         tag_scope: Annotated[
             Literal["matched_item", "parent", "either"],
             Field(
-                description="Apply tags to the native hit, its parent, or either level within the current native page."
+                description="Apply tags to the native hit, its parent, or either level within the current native page. For DOI/ISBN queries tags filter the matching items themselves."
             ),
         ] = "matched_item",
         view: Annotated[
@@ -592,10 +602,16 @@ class Library:
         native hit; ``parent`` applies them to its parent when it has one; ``either``
         accepts either level. Attachment hits are not deduplicated into parent items.
         Their summary includes ``matched_attachment_key`` and ``parent_key``.
-        For DOI/ISBN/URL or other non-title fields, use qmode="everything" with
-        item_type="-attachment" and verify the returned doi matches the target DOI.
-        The default mode can miss DOIs; unfiltered everything can match other papers'
-        attachments whose indexed text cites that DOI.
+        Identifier lookup: when the whole query is one DOI (bare, ``doi:`` prefix,
+        or a doi.org URL; case-insensitive) or one ISBN-10/13 (hyphens and spaces
+        optional; the ISBN-10 and ISBN-13 forms of one book both match), only
+        top-level items whose DOI field (or ``DOI:`` line in Extra) or ISBN field
+        equals it exactly are returned. Papers merely citing the DOI, and child notes
+        or attachments, are never returned. ``qmode`` and ``item_type`` are not
+        needed. The result carries ``identifier_lookup`` (``found`` false with empty
+        ``items`` means the library does not hold it). In this mode ``tags`` filter
+        the matches, and ``offset``/``limit``/``next_offset``/``total`` page through
+        the exact matches only.
         """
         normalize_view(view)
         self._check_item_type(item_type)
@@ -623,6 +639,11 @@ class Library:
             raise ValueError("item_type must be a string when provided.")
         # An empty or whitespace-only item_type means "no filter", like omitting it.
         item_type = item_type.strip() if item_type and item_type.strip() else None
+
+        pagination(limit, offset)
+        identifier = parse_identifier(query)
+        if identifier is not None:
+            return self._lookup_identifier(identifier, tags, item_type, limit, offset, view)
 
         params = pagination(limit, offset)
         params.update(q=query, qmode=qmode)
@@ -669,6 +690,79 @@ class Library:
             headers=search_headers,
             search=True,
         )
+
+    def _lookup_identifier(
+        self,
+        identifier: Identifier,
+        tags: list[str] | None,
+        item_type: str | None,
+        limit: int,
+        offset: int,
+        view: ReadView,
+    ) -> ItemPage:
+        """Exact DOI/ISBN lookup.
+
+        Zotero's own search is substring based and also hits papers that merely cite
+        the DOI, so it only supplies candidates (top-level items, via /items/top, so
+        child notes and attachments collapse into their parents). The identifier
+        fields then decide what really matches.
+        """
+        candidates: dict[str, Any] = {}
+        truncated = False
+        for query in identifier.queries:
+            for start in range(0, IDENTIFIER_CANDIDATE_CAP, 100):
+                params: dict[str, Any] = {
+                    "q": query,
+                    "qmode": "everything",
+                    "limit": 100,
+                    "start": start,
+                }
+                if item_type is not None:
+                    params["itemType"] = item_type
+                batch = self.zot.top(**params)
+                for item in batch:
+                    if isinstance(item, Mapping) and isinstance(item.get("key"), str):
+                        candidates.setdefault(item["key"], item)
+                if len(batch) < 100:
+                    break
+            else:
+                truncated = True
+
+        matches: list[tuple[Mapping[str, Any], str, str]] = []
+        for item in candidates.values():
+            hit = matching_field(item, identifier)
+            # Candidates are top-level, so the "parent" level of a hit is the hit.
+            if hit and (not tags or _tags_match(item, tags)):
+                matches.append((item, *hit))
+        window = matches[offset : offset + limit]
+        result = page(
+            [item for item, _, _ in window],
+            limit,
+            offset,
+            view=view,
+            headers={"Total-Results": len(matches)},
+            search=True,
+        )
+        lookup: dict[str, Any] = {
+            "type": identifier.kind,
+            "value": identifier.value,
+            "match": "exact",
+            "fields": identifier.fields,
+            "found": bool(matches),
+            "matches": [
+                {"key": item["key"], "field": field, "value": value}
+                for item, field, value in window
+            ],
+        }
+        if truncated:
+            lookup["candidates_truncated"] = True
+        if not matches:
+            lookup["message"] = (
+                f"No item in the library has this {identifier.kind.upper()} in "
+                f"{' or '.join(identifier.fields)}; items that only mention it were not returned."
+            )
+        result["identifier_lookup"] = lookup
+        return result
 
     @operation()
     def get_item_metadata(

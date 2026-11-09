@@ -97,6 +97,7 @@ class ItemPage(_FieldsSetModel):
     offset: int = 0
     next_offset: int | None = None
     total: int | None = None
+    identifier_lookup: dict[str, Any] | None = None
 
 
 class ItemMetadataEntry(_FieldsSetModel):

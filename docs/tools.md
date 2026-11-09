@@ -6,7 +6,7 @@
 
 | 工具 | 用途 |
 | --- | --- |
-| `search_items` | 搜索标题/作者/年份、标签；`qmode=everything` 包含 Zotero 索引的文本 |
+| `search_items` | 搜索标题/作者/年份、标签；`qmode=everything` 包含 Zotero 索引的文本；整串是 DOI/ISBN 时精确查找 |
 | `get_item_metadata` | 一次按 `item_keys`（1–50 个）读取语义元数据、`key` 和本地 `version`，子笔记/附件也可读；`view=raw` 获取原生对象 |
 | `get_item_children` | 列出子附件、笔记或批注；key 不存在（包括传入集合 key）返回 `NOT_FOUND`，只有确实没有子条目才返回空列表 |
 | `get_collections` | 列出集合及其父集合和版本 |
@@ -26,7 +26,7 @@
 
 搜索需要 `query` 或有效 `tags` 至少一项，tags-only 合法。`qmode=everything` 默认不排除附件，显式 `item_type` 筛选原生命中对象（空字符串或纯空白等同于不传；支持 `book || journalArticle`、`-attachment` 组合写法，类型名不是 Zotero 已知类型时返回 `INVALID_ARGUMENT`，可用 `get_item_schema` 查看）；结果提供父 key，保持上游顺序而不合并父子条目。`tag_scope=matched_item`（默认）由 Zotero 筛选命中对象的标签，`parent` / `either` 在当前原生页内检查相应层级。
 
-按 DOI/ISBN/URL 或其他非标题字段查找时，使用 `qmode="everything"` 配合 `item_type="-attachment"`，并核对返回的 `doi` 是否与目标 DOI 一致；默认模式可能漏掉 DOI，不排除附件则可能命中引用该 DOI 的其他论文全文。
+整个 `query` 是一个 DOI（裸 DOI、`doi:` 前缀或 `https://doi.org/`、`http://dx.doi.org/` 链接，不区分大小写）或 ISBN-10/13（连字符、空格可有可无）时，`search_items` 进入**标识符精确查找**：只返回 DOI 字段（或 Extra 里的 `DOI:` 行）、ISBN 字段与之完全相等的顶层条目；只引用该 DOI 的论文、目标的子笔记和附件都不会返回，不需要 `qmode` / `item_type`。响应带 `identifier_lookup`（`type`、规范化后的 `value`、`match: "exact"`、`found`、每条命中的 `matches[].field`），0 条时 `found=false` 并附 `message`，表示库里没有该标识符。该模式下 `tags` / `tag_scope` 筛选命中条目本身，`offset`、`limit`、`next_offset`、`total` 只在精确命中的条目里翻页。详见 [读取视图与搜索](read-views.md)。
 
 列表工具接受 `limit`（1–100）和 `offset`。始终用返回的 `next_offset` 续页，`null` 表示结束；父标签过滤后即使本页为空，也可能还有下一页。分页使用原生页的已消费位置及响应信息；上游没有可靠分页信息且最后一页刚好满页时，可能需要再请求一次空页。它不提供库修改期间的快照保证。
 

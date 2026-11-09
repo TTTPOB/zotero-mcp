@@ -22,7 +22,16 @@ MCP 结构化输出模型只序列化业务结果实际设置的字段（`model_
 
 `qmode="everything"` 默认不发送 `itemType`，因此保留 Zotero 返回的附件全文命中。需要限制返回对象时显式传 `item_type`，例如 `item_type="-attachment"`。为兼容原有元数据搜索，`qmode="titleCreatorYear"` 在未显式指定 `item_type` 时仍使用 `-attachment`。
 
-按 DOI/ISBN/URL 或其他非标题字段查找时，使用 `qmode="everything"` 配合 `item_type="-attachment"`，并核对返回的 `doi` 是否与目标 DOI 一致；默认模式可能漏掉 DOI，不排除附件则可能命中引用该 DOI 的其他论文全文。
+### 按 DOI / ISBN 精确查找
+
+整个 `query` 是一个标识符时，`search_items` 不再做普通文本搜索：
+
+- 识别范围：DOI（`10.x/...`、`doi:` 前缀、`https://doi.org/`、`http://dx.doi.org/`，大小写不敏感，URL 里的百分号编码会还原）；ISBN-10/13（可带 `ISBN` 前缀、连字符或空格）。裸的 10/13 位数字需要校验位正确才算 ISBN；带 `ISBN` 前缀则不校验，只做不转换的精确匹配。`query` 里除标识符外还有别的词，则仍是普通搜索。
+- 检索与过滤：先用 Zotero 的 `qmode=everything` 经 `/items/top` 取候选（子笔记、附件折叠为其父条目），再按字段精确过滤。DOI 比较 DOI 字段（也接受存成 `https://doi.org/...` 的值）和 Extra 中独占一行的 `DOI: ...`，不区分大小写；`10.1000/x.1` 不会匹配 `10.1000/x.10`。ISBN 比较 ISBN 字段（可存多个 ISBN），ISBN-10 与对应的 ISBN-13 视为同一本书。
+- ISBN 的候选检索：Zotero 保存 ISBN 时自动加连字符，且纯数字查询匹配不到带连字符的值。Zotero 搜索把 `%` 当作 LIKE 通配符，所以用 `9%7%8%…` 形式（数字间插入 `%`）一次就能命中任意分组方式；ISBN-10 与 ISBN-13 各查一次。
+- 响应：普通 `items` / `offset` / `next_offset` / `total`，外加 `identifier_lookup`：`type`（`doi`/`isbn`）、`value`（规范化后的标识符）、`match: "exact"`、`fields`、`found`、`matches`（本页每条命中的 `key`、命中的 `field` 和存储值）。没有命中时 `items` 为空、`found=false`，并有 `message` 说明库里没有该标识符。
+- 与普通搜索的差异：`qmode` 被忽略，`item_type` 只在显式给出时转发给 Zotero；`tags` 在精确命中之后过滤，三种 `tag_scope` 等价（命中的都是顶层条目）；分页针对精确命中的列表，`total` 是精确命中总数，`next_offset` 在还有更多精确命中时给出。候选上限 500 条/查询，超过时 `identifier_lookup.candidates_truncated=true`。
+- Zotero 10.0.6 保存条目时会把 Extra 里的 `DOI:` 行移入 DOI 字段，所以 Extra 兜底只对较旧或同步来的数据起作用。
 
 搜索结果采用“原生命中 + 关系字段”的最小契约，不扫描全库，也不把附件命中无界地去重或替换成父文献：
 
