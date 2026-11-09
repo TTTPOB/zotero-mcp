@@ -1,6 +1,7 @@
 """Local API operations. Pyzotero owns HTTP, authorization headers and versions."""
 
 import copy
+import difflib
 import hashlib
 import html
 import json
@@ -422,6 +423,7 @@ class Library:
         self._factory = factory
         self._zot: Zotero | None = None
         self._lock = threading.RLock()
+        self._item_type_names: frozenset[str] | None = None
 
     @property
     def zot(self) -> Zotero:
@@ -516,6 +518,7 @@ class Library:
         attachments whose indexed text cites that DOI.
         """
         normalize_view(view)
+        self._check_item_type(item_type)
         if not isinstance(qmode, str) or qmode not in {"titleCreatorYear", "everything"}:
             raise ValueError("qmode must be titleCreatorYear or everything.")
         if not isinstance(tag_scope, str) or tag_scope not in {"matched_item", "parent", "either"}:
@@ -1073,6 +1076,40 @@ class Library:
             "fields": self.zot.item_type_fields(item_type),
             "creator_types": self.zot.item_creator_types(item_type),
         }
+
+    def _check_item_type(self, item_type: str | None) -> None:
+        """Reject an item_type filter naming no Zotero item type; Zotero would return 0 hits.
+
+        Zotero's combined syntax is accepted: "a || b" and a leading "-" per alternative.
+        The type list is fetched once per Library, not on every search.
+        """
+        if not isinstance(item_type, str) or not item_type.strip():
+            return
+        wanted = [part.strip().removeprefix("-").strip() for part in item_type.split("||")]
+        wanted = [name for name in wanted if name]
+        if not wanted:
+            return
+        if self._item_type_names is None:
+            self._item_type_names = frozenset(
+                entry["itemType"] for entry in self.zot.item_types() if "itemType" in entry
+            )
+        unknown = [name for name in wanted if name not in self._item_type_names]
+        if not unknown:
+            return
+        lowered = {name.lower(): name for name in self._item_type_names}
+        guesses = [
+            lowered[match]
+            for name in unknown
+            for match in difflib.get_close_matches(name.lower(), lowered, n=3, cutoff=0.6)
+        ]
+        hint = f" Did you mean: {', '.join(dict.fromkeys(guesses))}?" if guesses else ""
+        raise LibraryError(
+            INVALID_ARGUMENT,
+            f"item_type {', '.join(repr(name) for name in unknown)} is not a Zotero item type "
+            f"(names are case-sensitive).{hint} Call zotero_get_item_schema without arguments "
+            "to list valid types; combine them like 'book || journalArticle' or exclude with "
+            "'-attachment'.",
+        )
 
     @operation()
     def get_citation_items(

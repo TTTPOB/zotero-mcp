@@ -81,6 +81,10 @@ def zot(item):
     zot.items.return_value = [copy.deepcopy(item)]
     zot.top.return_value = [copy.deepcopy(item)]
     zot.children.return_value = []
+    zot.item_types.return_value = [
+        {"itemType": name, "localized": name}
+        for name in ("attachment", "book", "journalArticle", "magazineArticle", "note")
+    ]
     zot.everything.side_effect = lambda items: items
     zot.request = SimpleNamespace(text="@article{中文, title={中文文献}}")
     return zot

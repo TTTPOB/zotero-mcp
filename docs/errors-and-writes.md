@@ -22,7 +22,7 @@
 
 当前稳定代码：
 
-- `INVALID_ARGUMENT`：参数、输入字段或 MCP 输入校验不通过。`message` 只有一两句话，写明参数路径（如 `item_keys[3]`）、问题和改法；多个问题时列出前 3 条并注明总数。`details` 是前 5 条的 `type`、`loc`、`msg`，不回显输入值，也不带 pydantic 文档链接。
+- `INVALID_ARGUMENT`：参数、输入字段或 MCP 输入校验不通过。`message` 只有一两句话，写明参数路径（如 `item_keys[3]`）、问题和改法；多个问题时列出前 3 条并注明总数。`details` 是前 5 条的 `type`、`loc`、`msg`，不回显输入值，也不带 pydantic 文档链接。`search_items` 的 `item_type` 不是 Zotero 已知类型时同样返回此码，见 [ADR 0006](adr/0006-short-argument-errors.md)。
 - `NOT_FOUND`：条目、集合或附件不存在。
 - `NO_INDEX`：通用的无索引错误；全文工具使用更具体的 `FULLTEXT_NOT_INDEXED`。
 - `FULLTEXT_NOT_INDEXED`：全文工具没有可读取的附件索引，并在 `details.attachment_key` 保留来源。
