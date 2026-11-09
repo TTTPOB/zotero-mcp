@@ -39,6 +39,15 @@ def no_network(monkeypatch):
     monkeypatch.setattr(socket, "create_connection", blocked)
 
 
+@pytest.fixture(autouse=True)
+def no_host_proxy(monkeypatch):
+    # Host proxy settings never apply to fake transports, and httpx2 rejects
+    # some real-world NO_PROXY entries such as "[::1]" when building a client.
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"):
+        monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv(name.lower(), raising=False)
+
+
 @pytest.fixture
 def item():
     return {
