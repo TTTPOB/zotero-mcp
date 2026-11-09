@@ -36,7 +36,7 @@
 
 每次 `get_citation_items` 接受 1–50 个 key，按输入顺序（包括重复 key）返回逐项状态。Word/LibreOffice 的 Zotero 字段使用 `uri`（必须以 `http://zotero.org/` 开头）；笔记链接使用 `select_link`，Pandoc/LaTeX 使用 `citation_key` 和 `csl`。不要把 `links.alternate.href` 网页地址作为引用 URI。没有 citation key 时返回 null，不自行生成；CSL 对象保持原样，其 `id` 可能是 citation key，不是查询用的条目 key。缺失 key 或子笔记/附件返回 `NOT_FOUND`，独立笔记/附件/批注返回 `NOT_CITABLE`，无效 CSL 数据返回 `CITATION_DATA_INVALID`。
 
-`export_items` 同样接受 1–50 个 key，只导出顶层条目，不附带子笔记/附件。CSL JSON 中的 `id` 在 Zotero 有 citation key 时使用该值，否则为条目 URI；需要按 key 可靠关联引用数据时使用 `get_citation_items`。
+`export_items` 同样接受 1–50 个 key，只导出顶层条目，不附带子笔记/附件。BibTeX、RIS 的 `content` 是文本；CSL JSON 的 `content` 是解析后的 CSL 对象数组，可直接写成 Pandoc 参考文献文件。CSL JSON 中的 `id` 在 Zotero 有 citation key 时使用该值，否则为条目 URI；需要按 key 可靠关联引用数据时使用 `get_citation_items`。
 
 ## 写入
 

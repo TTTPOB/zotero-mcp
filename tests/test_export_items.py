@@ -1,19 +1,37 @@
+import json
+
 import pytest
+
+from zotero_mcp.errors import LibraryError
+
+CSL = [{"id": "citation-key", "type": "article-journal"}]
 
 
 @pytest.mark.parametrize("format", ["bibtex", "ris", "csljson"])
 @pytest.mark.parametrize("count", [1, 50])
 def test_export_uses_top_with_explicit_limit(library, zot, format, count):
     keys = [f"KEY{i:05d}" for i in range(count)]
-    exported = [{"id": "citation-key", "type": "article-journal"}]
-    zot.top.return_value = exported
+    zot.top.return_value = json.dumps(CSL).encode()
     result = library.export_items(keys, format=format)
     zot.top.assert_called_once_with(itemKey=",".join(keys), format=format, limit=count)
     zot.items.assert_not_called()
     assert result == {
         "format": format,
-        "content": exported if format == "csljson" else zot.request.text,
+        "content": CSL if format == "csljson" else zot.request.text,
     }
+
+
+@pytest.mark.parametrize("raw", [json.dumps(CSL).encode(), json.dumps(CSL), CSL])
+def test_csljson_export_returns_parsed_array(library, zot, raw):
+    zot.top.return_value = raw
+    assert library.export_items(["ABCD1234"], format="csljson")["content"] == CSL
+
+
+def test_csljson_export_rejects_invalid_json(library, zot):
+    zot.top.return_value = b"not json"
+    with pytest.raises(LibraryError) as caught:
+        library.export_items(["ABCD1234"], format="csljson")
+    assert caught.value.code == "CITATION_DATA_INVALID"
 
 
 @pytest.mark.parametrize("keys", [[], ["ABCD1234"] * 51])

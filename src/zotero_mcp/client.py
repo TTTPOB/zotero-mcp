@@ -1108,7 +1108,8 @@ class Library:
     ) -> dict[str, Any]:
         """Export up to 50 top-level items using Zotero's built-in local translators.
 
-        Child notes and attachments are not exported. In CSL JSON, id is the item's
+        Child notes and attachments are not exported. BibTeX and RIS content is text;
+        CSL JSON content is a parsed array of CSL objects. A CSL id is the item's
         citation key when available (otherwise an item URI), not a lookup key.
         For per-key citation data use zotero_get_citation_items.
         """
@@ -1117,10 +1118,17 @@ class Library:
         result = self.zot.top(
             itemKey=",".join(key(k) for k in item_keys), format=format, limit=len(item_keys)
         )
-        return {
-            "format": format,
-            "content": result if format == "csljson" else self.zot.request.text,
-        }
+        if format != "csljson":
+            return {"format": format, "content": self.zot.request.text}
+        # pyzotero returns the raw CSL JSON body for this format.
+        if isinstance(result, (bytes, str)):
+            try:
+                result = json.loads(result)
+            except ValueError as exc:
+                raise LibraryError(
+                    CITATION_DATA_INVALID, "Zotero returned invalid CSL JSON."
+                ) from exc
+        return {"format": format, "content": result}
 
     @operation(write=True)
     def add_items(self, items: ItemDataList) -> WriteResponse:
