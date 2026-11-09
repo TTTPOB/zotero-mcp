@@ -62,10 +62,14 @@ def test_update_sends_patch_with_version_and_local_key(wire):
             (200, {"key": "ABCD1234", "version": 7, "data": {}}),
             (200, [{"field": "title"}]),
             (204, ""),
+            (200, {"key": "ABCD1234", "version": 8, "data": {}}),
         ]
     )
-    assert library.update_item("ABCD1234", 7, {"title": "修改标题"})["ok"]
-    request = calls[-1]
+    result = library.update_item("ABCD1234", 7, {"title": "修改标题"})
+    assert result["ok"] and result["version"] == 8
+    assert result["results"][0]["version"] == 8
+    assert [c.method for c in calls] == ["GET", "GET", "PATCH", "GET"]
+    request = calls[2]
     assert request.method == "PATCH"
     assert request.url.path == "/api/users/0/items/ABCD1234"
     assert request.headers["If-Unmodified-Since-Version"] == "7"

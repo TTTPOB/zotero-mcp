@@ -66,7 +66,7 @@
 
 附件上传若在创建条目之后失败，保留 `attachment_key` 和 `stage`。先检查该附件，避免重新调用产生重复项。工具级错误使用稳定的 `code`、`message`、`retryable` 和 MCP `isError=true`；部分批量结果保留已完成项，恢复方法见 [错误与写入](errors-and-writes.md)。`attach_markdown` 固定使用 `paper-chew-fulltext.md`，同内容附件返回 `unchanged`，同名异内容、多同名或已有附件无法读取时不会创建第二份，也不会自动删除。
 
-更新后没有服务器确认的新版本时，下一次修改前重新读取，不自行把旧版本加一。
+`update_item` 和 `update_collection` 成功后返回新的本地 `version`（顶层和 `results[0].version`），连续修改时直接使用；读回失败时为 `null`，下一次修改前重新读取，不自行把旧版本加一。
 
 ## 示例
 

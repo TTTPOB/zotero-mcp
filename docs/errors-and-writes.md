@@ -67,6 +67,6 @@
 
 ## 版本与变更
 
-更新和删除要求调用者传入最近读取到的本地 `version`。写成功结果只在 Zotero 或 pyzotero 确实返回新版本时才可携带版本；拿不到确认版本时不会猜测 `version + 1`，调用者应重读条目。`changes` 是补丁字段，不是 summary 或原生对象的无条件往返写回。
+更新和删除要求调用者传入最近读取到的本地 `version`。`update_item` 和 `update_collection` 成功后，在顶层 `version` 和 `results[0].version` 返回该条目或集合的新本地版本，可直接用于下一次修改，不必先重读。这个版本是写入成功后立即读回的条目/集合版本，而不是响应头 `Last-Modified-Version`：后者是整个库的版本，当更新没有改变任何内容时，它会大于条目自己的版本。读回失败时两处都是 `null`，不会猜测 `version + 1`，调用者应重读条目。`delete_*` 没有新版本；创建工具的版本在 `successful` 的各项中。批量标签/集合修改的 `results` 不带 `version`。`changes` 是补丁字段，不是 summary 或原生对象的无条件往返写回。
 
 创建工具的 MCP annotation 将 `destructiveHint` 标记为 false；这只是客户端提示，不替代本地授权和版本约束，也不是额外的确认机制。

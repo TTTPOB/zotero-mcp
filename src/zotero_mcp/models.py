@@ -66,6 +66,10 @@ class WriteEntry(BaseModel):
     input_index: int = Field(ge=0)
     status: WriteStatus
     key: str | None = None
+    version: int | None = Field(
+        default=None,
+        description="New local version after update_item/update_collection; null when unknown.",
+    )
     stage: WriteStage | None = None
     error: Any = None
 
@@ -83,6 +87,10 @@ class WriteResult(BaseModel):
     status: Literal["success", "partial", "failed", "unknown"] = "success"
     results: list[WriteEntry] = Field(default_factory=list)
     key: str | None = None
+    version: int | None = Field(
+        default=None,
+        description="New local version after update_item/update_collection; null when unknown.",
+    )
     attachment_key: str | None = None
     stage: WriteStage | None = None
     successful: dict[str, Any] = Field(default_factory=dict)

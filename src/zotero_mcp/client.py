@@ -387,6 +387,17 @@ def write_result(
     return normalized
 
 
+def _single_write_result(entity_key: str, version: int | None) -> dict[str, Any]:
+    """Success payload for update_item/update_collection, carrying the new local version."""
+    return {
+        "ok": True,
+        "status": "success",
+        "key": entity_key,
+        "version": version,
+        "results": [{"input_index": 0, "key": entity_key, "status": "success", "version": version}],
+    }
+
+
 def _not_found_error(kind: str, entity_key: str, operation_name: str) -> LibraryError:
     finder = "get_collections" if kind == "collection" else "search_items"
     return LibraryError(
@@ -481,7 +492,10 @@ class Library:
     def _read_version(self, kind: str, entity_key: str) -> int | None:
         """Current local version of an item or collection, or None when it cannot be read.
 
-        Used after a write already conflicted, so a failed read must not hide the conflict.
+        Used after a write that already conflicted or succeeded, so a failed read must not
+        change that outcome. Zotero's Last-Modified-Version response header is deliberately
+        not used: it is the library version, which differs from the entity's own version
+        when an update changed nothing.
         """
         try:
             record = (
@@ -1440,7 +1454,9 @@ class Library:
         Only supplied fields change. Arrays such as tags, creators and collections
         replace the existing array. A missing item is NOT_FOUND. A concurrent change
         is VERSION_CONFLICT with error.details.current_version; resubmit with that
-        version only after confirming your changes still apply to the current item.
+        version only after confirming your changes still apply to the current item. On
+        success, version (also in results[0].version) is the item's new local version, or
+        null if it could not be read back; use it for the next update without re-reading.
         """
         if not changes or {"key", "version", "data", "library"} & changes.keys():
             raise ValueError("Provide changed fields only, without key/version/data/library.")
@@ -1466,12 +1482,7 @@ class Library:
                 "UNKNOWN_WRITE_RESULT",
                 "Zotero did not confirm the update; inspect the item before retrying.",
             )
-        return {
-            "ok": True,
-            "status": "success",
-            "key": payload["key"],
-            "results": [{"input_index": 0, "key": payload["key"], "status": "success"}],
-        }
+        return _single_write_result(payload["key"], self._read_version("item", payload["key"]))
 
     @operation(write=True)
     def delete_item(self, item_key: ItemKey, version: Version) -> WriteResponse:
@@ -1566,7 +1577,8 @@ class Library:
         """Rename/move a collection. Use parent_collection='' to move it to the root.
 
         A missing collection is NOT_FOUND. A concurrent change is VERSION_CONFLICT with
-        error.details.current_version.
+        error.details.current_version. On success, version (also in results[0].version)
+        is the collection's new local version, or null if it could not be read back.
         """
         if name is None and parent_collection is None:
             raise ValueError("Provide a name or parent_collection to change.")
@@ -1601,12 +1613,9 @@ class Library:
             ) from exc
         if confirmed is not True:
             raise RuntimeError("Zotero did not confirm the collection update.")
-        return {
-            "ok": True,
-            "status": "success",
-            "key": collection_key,
-            "results": [{"input_index": 0, "key": collection_key, "status": "success"}],
-        }
+        return _single_write_result(
+            collection_key, self._read_version("collection", collection_key)
+        )
 
     @operation(write=True)
     def delete_collection(self, collection_key: ItemKey, version: Version) -> WriteResponse:

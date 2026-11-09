@@ -338,3 +338,47 @@ def test_collection_version_conflict_reports_current_version(mcp):
     deleted = mcp("delete_collection", {"collection_key": key, "version": stale}, error=True)
     assert deleted["error"]["code"] == "VERSION_CONFLICT"
     assert deleted["error"]["details"]["current_version"] == latest
+
+
+def test_update_item_returns_the_new_version_for_chained_updates(mcp, new_item):
+    key, version = new_item(date="2020")
+    first = mcp("update_item", {"item_key": key, "version": version, "changes": {"title": "v-one"}})
+    assert first["version"] == first["results"][0]["version"] == version_of(mcp, key)
+    assert first["version"] > version
+
+    # No re-read between the two updates.
+    second = mcp(
+        "update_item", {"item_key": key, "version": first["version"], "changes": {"title": "v-two"}}
+    )
+    assert second["version"] == version_of(mcp, key) > first["version"]
+    assert read_item(mcp, key)["data"]["title"] == "v-two"
+
+
+def test_noop_update_returns_the_item_version_not_the_library_version(mcp, new_item):
+    key, version = new_item(title="Live noop")
+    other, other_version = new_item()
+    # Move the library version past the item's version.
+    mcp("update_item", {"item_key": other, "version": other_version, "changes": {"title": "bump"}})
+    result = mcp(
+        "update_item", {"item_key": key, "version": version, "changes": {"title": "Live noop"}}
+    )
+    assert result["version"] == version == version_of(mcp, key)
+
+
+def test_update_collection_returns_the_new_version(mcp):
+    key = mcp("create_collection", {"name": "Live version"})["results"][0]["key"]
+
+    def current():
+        return {c["key"]: c for c in mcp("get_collections", {"limit": 100})["items"]}[key][
+            "version"
+        ]
+
+    result = mcp(
+        "update_collection", {"collection_key": key, "version": current(), "name": "Live version 2"}
+    )
+    assert result["version"] == result["results"][0]["version"] == current()
+    chained = mcp(
+        "update_collection",
+        {"collection_key": key, "version": result["version"], "name": "Live version 3"},
+    )
+    assert chained["version"] == current() > result["version"]
