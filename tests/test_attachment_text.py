@@ -31,7 +31,7 @@ def attachment(
 def test_read_attachment_text_uses_original_bytes_and_pages(library, zot):
     zot.item.side_effect = None
     zot.item.return_value = attachment()
-    raw = "# 标题\r\n😀正文".encode()
+    raw = "# 标题\r\n𠮷正文".encode()
     zot.file.return_value = raw
 
     first = library.read_attachment_text("ATTACH01", max_characters=4)
