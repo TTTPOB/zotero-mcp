@@ -477,7 +477,7 @@ class Library:
         qmode: Annotated[
             Literal["titleCreatorYear", "everything"],
             Field(
-                description="Search title/creator/year, or all searchable fields and indexed text with everything."
+                description="For DOI/ISBN/URL or non-title fields, use everything with item_type='-attachment'; verify the returned doi."
             ),
         ] = "titleCreatorYear",
         limit: ReadLimit = 25,
@@ -504,6 +504,10 @@ class Library:
         native hit; ``parent`` applies them to its parent when it has one; ``either``
         accepts either level. Attachment hits are not deduplicated into parent items.
         Their summary includes ``matched_attachment_key`` and ``parent_key``.
+        For DOI/ISBN/URL or other non-title fields, use qmode="everything" with
+        item_type="-attachment" and verify the returned doi matches the target DOI.
+        The default mode can miss DOIs; unfiltered everything can match other papers'
+        attachments whose indexed text cites that DOI.
         """
         normalize_view(view)
         if not isinstance(qmode, str) or qmode not in {"titleCreatorYear", "everything"}:
