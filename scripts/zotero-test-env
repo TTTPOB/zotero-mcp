@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# Manage a disposable Zotero (rootless podman) for tests/live.
+#
+#   build   build the image (pinned Zotero, uv and locked dependencies)
+#   start   start a fresh, empty Zotero with a pre-authorized write key
+#   stop    stop it and discard its library
+#   reset   stop + start
+#   test    run tests/live inside the container (extra args go to pytest)
+#   serve   run `zotero-mcp serve --transport http` in the container, published on 127.0.0.1
+#
+# The repository is mounted read-only at /src; the virtual environment lives inside
+# the container, so the host's .venv is never touched.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+IMAGE="${ZOTERO_TEST_IMAGE:-localhost/zotero-mcp-test:10.0.6}"
+NAME="${ZOTERO_TEST_CONTAINER:-zotero-mcp-test}"
+CONTEXT="$ROOT/containers/zotero-test"
+MCP_PORT=8000
+
+usage() {
+    sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+    exit 2
+}
+
+running() {
+    [ "$(podman container inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null || true)" = true ]
+}
+
+in_container() {
+    podman exec "$NAME" "$@"
+}
+
+cmd_build() {
+    podman build --build-context "repo=$ROOT" -t "$IMAGE" -f "$CONTEXT/Containerfile" "$CONTEXT"
+}
+
+cmd_stop() {
+    # The container is created with --rm, so stopping it also discards the library.
+    podman rm -f -t 15 "$NAME" >/dev/null 2>&1 || true
+}
+
+cmd_start() {
+    podman image exists "$IMAGE" || { echo "Image $IMAGE is missing; run: $0 build" >&2; exit 1; }
+    cmd_stop
+    local key
+    key="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n' | tr a-f A-F)"
+    # Only loopback ports on the host; ephemeral so concurrent runs cannot collide.
+    podman run -d --rm --name "$NAME" \
+        --userns=keep-id:uid=1001,gid=1001 \
+        --shm-size=256m \
+        -e "ZOTERO_TEST_API_KEY=$key" \
+        -v "$ROOT:/src:ro" \
+        -p 127.0.0.1::23129 -p "127.0.0.1::$MCP_PORT" \
+        "$IMAGE" >/dev/null
+
+    local deadline=$((SECONDS + 90)) headers=""
+    until headers="$(in_container curl -fsS -D - -o /dev/null "http://127.0.0.1:23119/api/users/0/items?limit=1" 2>/dev/null)"; do
+        if ! running; then
+            echo "Zotero container exited during startup:" >&2
+            podman logs "$NAME" 2>&1 | tail -n 20 >&2 || true
+            exit 1
+        fi
+        if [ "$SECONDS" -ge "$deadline" ]; then
+            echo "Timed out waiting for the Zotero local API." >&2
+            podman logs "$NAME" 2>&1 | tail -n 20 >&2 || true
+            exit 1
+        fi
+        sleep 0.5
+    done
+    local server_id
+    server_id="$(printf '%s' "$headers" | tr -d '\r' | sed -n 's/^[Zz]otero-[Ss]erver-[Ii][Dd]: *//p')"
+    if [ -z "$server_id" ]; then
+        echo "The local API did not return a Zotero-Server-ID header." >&2
+        exit 1
+    fi
+
+    # Same file that `zotero-mcp authorize` writes (see zotero_mcp.config.save_auth).
+    in_container sh -c '
+        dir="$XDG_CONFIG_HOME/zotero-mcp"
+        mkdir -p "$dir"
+        printf "{\"server_id\": \"%s\", \"key\": \"%s\"}\n" "$1" "$ZOTERO_TEST_API_KEY" > "$dir/local-auth.json"
+        printf "%s\n" "$1" > "$HOME/server-id"
+    ' sh "$server_id"
+
+    echo "Zotero $NAME is ready (server id $server_id)."
+    echo "  API relay (inspection only): http://$(podman port "$NAME" 23129/tcp | head -n 1)/api/"
+    echo "  MCP port for '$0 serve':     http://$(podman port "$NAME" "$MCP_PORT/tcp" | head -n 1)/mcp"
+}
+
+require_running() {
+    running || { echo "Container $NAME is not running; run: $0 start" >&2; exit 1; }
+}
+
+cmd_test() {
+    require_running
+    # --frozen keeps the pre-installed locked dependencies; only the project is added.
+    podman exec -w /src \
+        -e ZOTERO_LIVE=1 \
+        "$NAME" sh -c '
+            export ZOTERO_TEST_SERVER_ID="$(cat "$HOME/server-id")"
+            uv sync --frozen --quiet
+            exec uv run --frozen pytest -p no:cacheprovider tests/live "$@"
+        ' sh "$@"
+}
+
+cmd_serve() {
+    require_running
+    echo "MCP endpoint: http://$(podman port "$NAME" "$MCP_PORT/tcp" | head -n 1)/mcp (Ctrl-C to stop)" >&2
+    podman exec -it -w /src "$NAME" sh -c '
+        uv sync --frozen --quiet
+        exec uv run --frozen zotero-mcp serve --transport http --host 0.0.0.0 --port '"$MCP_PORT"'
+    '
+}
+
+case "${1:-}" in
+    build) cmd_build ;;
+    start) cmd_start ;;
+    stop) cmd_stop ;;
+    reset) cmd_stop; cmd_start ;;
+    test) shift; cmd_test "$@" ;;
+    serve) cmd_serve ;;
+    *) usage ;;
+esac

@@ -1,0 +1,46 @@
+# Disposable Zotero 10 with the local API enabled, for tests/live.
+# Build with scripts/zotero-test-env build (it supplies the "repo" build context).
+FROM docker.io/library/ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates curl xz-utils xvfb xauth fonts-liberation \
+        libgtk-3-0 libdbus-glib-1-2 libasound2t64 libx11-xcb1 libxt6 libpci3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pinned to the version of the Zotero release this project targets.
+ARG ZOTERO_VERSION=10.0.6
+ARG ZOTERO_SHA256=246c2574a9ac526abeaf3027ffd22fc45536a5ab25f227bb1df932fca9cedd63
+RUN curl -fsSL -o /tmp/zotero.tar.xz \
+        "https://download.zotero.org/client/release/${ZOTERO_VERSION}/Zotero-${ZOTERO_VERSION}_linux-x86_64.tar.xz" \
+    && echo "${ZOTERO_SHA256}  /tmp/zotero.tar.xz" | sha256sum -c - \
+    && mkdir /opt/zotero \
+    && tar -xJf /tmp/zotero.tar.xz -C /opt/zotero --strip-components=1 \
+    && rm /tmp/zotero.tar.xz
+
+COPY --from=ghcr.io/astral-sh/uv:0.12.10 /uv /usr/local/bin/uv
+ENV UV_PYTHON_INSTALL_DIR=/opt/python UV_PYTHON=3.13 UV_LINK_MODE=copy
+RUN uv python install 3.13 \
+    && chmod -R a+rX /opt/python \
+    && ln -s "$(uv python find 3.13)" /usr/local/bin/python3
+
+# UID 1000 is taken by the base image's "ubuntu" user.
+RUN useradd -m -u 1001 zotero
+COPY relay.py /opt/relay.py
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod 644 /opt/relay.py && chmod 755 /usr/local/bin/entrypoint.sh
+
+USER zotero
+ENV HOME=/home/zotero \
+    XDG_CONFIG_HOME=/home/zotero/.config \
+    UV_PROJECT_ENVIRONMENT=/home/zotero/venv \
+    PYTHONDONTWRITEBYTECODE=1 \
+    MOZ_CRASHREPORTER_DISABLE=1
+
+# Pre-install the locked dependencies; the test run only adds the project itself.
+COPY --from=repo --chown=zotero:zotero pyproject.toml uv.lock /home/zotero/seed/
+RUN cd /home/zotero/seed && uv sync --frozen --no-install-project
+
+EXPOSE 23129
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
