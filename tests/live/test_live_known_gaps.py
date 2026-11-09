@@ -1,10 +1,4 @@
-"""Behavior that is wrong in the current code; fixed in stage 3.
-
-Each test asserts the intended behavior and is marked xfail(strict=True), so the suite
-stays green now and the marker must be removed together with the fix.
-"""
-
-import pytest
+"""Regression tests for behavior that was wrong against a real Zotero (fixed in stage 3)."""
 
 
 def keys(page):
@@ -33,10 +27,9 @@ def test_get_tags_lists_library_tags(mcp, seed):
     assert isinstance(page["offset"], int)
 
 
-@pytest.mark.xfail(strict=True, reason="fixed in stage 3")
 def test_adding_child_items_to_a_collection_is_rejected_before_any_write(mcp, seed, new_item):
-    # Zotero cannot place child items in a collection: it answers HTTP 500 and the
-    # current code reports UNKNOWN_WRITE_RESULT after writing the earlier keys.
+    # Zotero cannot place child items in a collection: it answers HTTP 500, which used
+    # to surface as UNKNOWN_WRITE_RESULT after the earlier keys had been written.
     collection = mcp("create_collection", {"name": "Live no children"})["results"][0]["key"]
     top, _ = new_item()
 

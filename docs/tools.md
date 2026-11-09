@@ -11,7 +11,7 @@
 | `get_item_children` | 列出子附件、笔记或批注 |
 | `get_collections` | 列出集合及其父集合和版本 |
 | `get_collection_items` | 列出直接属于某集合的条目 |
-| `get_tags` | 列出标签 |
+| `get_tags` | 列出标签名；`items` 为 `{"tag": "名称"}` 数组，不含标签类型和条目数 |
 | `get_recent` | 按添加时间列出最近的顶层条目 |
 | `get_notes` | 读取笔记，可指定父条目 |
 | `get_annotations` | 读取指定附件的 Zotero 批注 |
@@ -52,7 +52,7 @@
 | `update_collection` | 按 key、version 重命名或移动集合 |
 | `delete_collection` | 永久删除集合及子集合，保留文献 |
 | `batch_update_tags` | 批量增删标签，保留未修改的标签和标签类型 |
-| `manage_collection_items` | 批量加入/移出集合，保留其他集合归属 |
+| `manage_collection_items` | 批量加入/移出集合，保留其他集合归属；加入时若含子笔记/附件，整批拒绝并返回 `CHILD_ITEM_NOT_ALLOWED` |
 | `attach_file` | 将绝对路径的本地文件复制到 Zotero 附件存储 |
 | `attach_markdown` | 幂等创建固定名称 `paper-chew-fulltext.md` Markdown 附件 |
 

@@ -24,6 +24,7 @@ from zotero_mcp.errors import (
     ATTACHMENT_CONTENT_CONFLICT,
     ATTACHMENT_CONTENT_UNAVAILABLE,
     ATTACHMENT_NAME_AMBIGUOUS,
+    CHILD_ITEM_NOT_ALLOWED,
     CITATION_DATA_INVALID,
     CONNECTION_ERROR,
     INVALID_ARGUMENT,
@@ -1432,6 +1433,22 @@ class Library:
 
         return self._edit_lists(item_keys, "tags", change)
 
+    def _reject_child_items(self, item_keys: list[str]) -> None:
+        """Fail before any write when a key is a child item (it cannot join a collection)."""
+        children = []
+        for item_key in dict.fromkeys(key(k) for k in item_keys):
+            parent_key = self.zot.item(item_key).get("data", {}).get("parentItem")
+            if parent_key:
+                children.append({"key": item_key, "parent_key": parent_key})
+        if children:
+            listed = ", ".join(f"{c['key']} (parent {c['parent_key']})" for c in children)
+            raise LibraryError(
+                CHILD_ITEM_NOT_ALLOWED,
+                "Child notes and attachments cannot be added to a collection; add their "
+                f"parent items instead. No items were changed. Child items: {listed}.",
+                details={"children": children},
+            )
+
     @operation(write=True)
     def manage_collection_items(
         self,
@@ -1447,13 +1464,17 @@ class Library:
         """Add/remove up to 50 items from a collection, preserving other memberships.
 
         Stop at the first failure and report completed and pending keys.
-        Removing membership does not delete an item.
+        Removing membership does not delete an item. Zotero keeps child notes and
+        attachments out of collections: when adding, the whole batch is rejected with
+        CHILD_ITEM_NOT_ALLOWED before any write if any key is a child item. The error
+        details list each child's key and parent_key; add the parent item instead.
         """
         collection_key = key(collection_key)
         if action not in {"add", "remove"}:
             raise ValueError("action must be add or remove.")
         if action == "add":
             self.zot.collection(collection_key)
+            self._reject_child_items(item_keys)
 
         def change(collections):
             if action == "add" and collection_key not in collections:
