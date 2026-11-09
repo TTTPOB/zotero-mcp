@@ -116,12 +116,27 @@ def test_get_collections(mcp, seed):
 def test_get_collection_items(mcp, seed):
     page = mcp("get_collection_items", {"collection_key": seed.parent})
     assert seed.alpha in keys(page)
-    # Zotero also lists the children of collection members.
-    assert {seed.pdf, seed.note} <= set(keys(page))
-    by_key = {item["key"]: item for item in page["items"]}
-    assert by_key[seed.pdf]["parent_key"] == seed.alpha
-    assert by_key[seed.alpha]["parent_key"] is None
+    # Children of collection members are not listed; the native non-top endpoint would.
+    assert not {seed.pdf, seed.note} & set(keys(page))
+    assert all(item["parent_key"] is None for item in page["items"])
+    assert page["total"] == len(page["items"])
     assert mcp("get_collection_items", {"collection_key": seed.child})["items"] == []
+
+
+def test_get_collection_items_keeps_standalone_notes(mcp, new_item):
+    collection = mcp("create_collection", {"name": "Live top-level only"})["results"][0]["key"]
+    paper, _ = new_item(collections=[collection])
+    child_note = mcp("create_note", {"parent_key": paper, "text": "child"})["results"][0]["key"]
+    standalone = mcp(
+        "add_items",
+        {"items": [{"itemType": "note", "note": "<p>standalone</p>", "collections": [collection]}]},
+    )["results"][0]["key"]
+
+    page = mcp("get_collection_items", {"collection_key": collection})
+
+    assert set(keys(page)) == {paper, standalone}
+    assert child_note not in keys(page)
+    assert page["total"] == 2
 
 
 def test_get_recent_lists_top_level_items(mcp, seed):

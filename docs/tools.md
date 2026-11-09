@@ -10,7 +10,7 @@
 | `get_item_metadata` | 一次按 `item_keys`（1–50 个）读取语义元数据、`key` 和本地 `version`，子笔记/附件也可读；`view=raw` 获取原生对象 |
 | `get_item_children` | 列出子附件、笔记或批注 |
 | `get_collections` | 列出集合及其父集合和版本 |
-| `get_collection_items` | 列出直接属于某集合的条目 |
+| `get_collection_items` | 列出直接属于某集合的顶层条目（独立附件、独立笔记也是顶层，仍会列出）；不含子附件/子笔记，子条目用 `get_item_children`，summary 的 `fulltext.candidate_attachment_key` 给出最佳附件 |
 | `get_tags` | 列出标签名；`items` 为 `{"tag": "名称"}` 数组，不含标签类型和条目数 |
 | `get_recent` | 按添加时间列出最近的顶层条目 |
 | `get_notes` | 读取笔记，可指定父条目 |

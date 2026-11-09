@@ -672,9 +672,16 @@ class Library:
             ),
         ] = "summary",
     ) -> ItemPage:
-        """List collection items as summaries; request metadata or raw when needed."""
+        """List the top-level items directly in a collection, as summaries by default.
+
+        Child attachments and notes are not listed (Zotero's non-top endpoint would
+        add the children of every member, taking up pages and the total). Standalone
+        attachments and notes are top-level and still appear. Use get_item_children
+        for a paper's children; a summary's fulltext.candidate_attachment_key names
+        its best attachment. Request metadata or raw when needed.
+        """
         return self._page(
-            self.zot.collection_items(key(collection_key), **pagination(limit, offset)),
+            self.zot.collection_items_top(key(collection_key), **pagination(limit, offset)),
             limit,
             offset,
             view=view,

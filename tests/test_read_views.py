@@ -107,10 +107,29 @@ def test_metadata_is_semantic_and_raw_is_unchanged(library, zot):
     assert "links" not in metadata
 
 
+def test_collection_items_lists_only_top_level_items(library, zot):
+    paper = _native_item("PAPER001", title="Paper")
+    standalone_note = _native_item("NOTE0002", item_type="note")
+    child_note = _native_item("NOTE0001", item_type="note", parent_key="PAPER001")
+    child_pdf = _native_item(
+        "PDF00001", item_type="attachment", title="paper.pdf", parent_key="PAPER001"
+    )
+    # Zotero's non-top endpoint also returns the children of collection members.
+    zot.collection_items.return_value = [paper, child_note, standalone_note, child_pdf]
+    zot.collection_items_top.return_value = [paper, standalone_note]
+
+    result = library.get_collection_items("coll0001", limit=25)
+
+    assert [item["key"] for item in result["items"]] == ["PAPER001", "NOTE0002"]
+    assert all(item["parent_key"] is None for item in result["items"])
+    zot.collection_items_top.assert_called_once_with("COLL0001", limit=25, start=0)
+    zot.collection_items.assert_not_called()
+
+
 def test_lists_default_to_summary_and_keep_raw_escape_hatch(library, zot):
     native = _native_item("PAPER001", title="Full title")
     zot.top.return_value = [native]
-    zot.collection_items.return_value = [native]
+    zot.collection_items_top.return_value = [native]
 
     recent = library.get_recent(limit=1)
     collection = library.get_collection_items("COLL0001", limit=1)
