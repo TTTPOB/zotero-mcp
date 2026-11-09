@@ -11,9 +11,10 @@ import threading
 from collections.abc import Callable, Mapping
 from functools import wraps
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import parse_qs, unquote, urlparse
 
+from pydantic import Field
 from pyzotero import ResourceNotFoundError, Zotero
 
 from zotero_mcp.config import Settings, load_auth
@@ -935,12 +936,24 @@ class Library:
 
     @operation()
     def export_items(
-        self, item_keys: list[str], format: Literal["bibtex", "ris", "csljson"] = "bibtex"
+        self,
+        item_keys: Annotated[list[str], Field(description="1–50 Zotero item keys to export.")],
+        format: Annotated[
+            Literal["bibtex", "ris", "csljson"],
+            Field(description="Zotero export format: BibTeX, RIS, or CSL JSON."),
+        ] = "bibtex",
     ) -> dict[str, Any]:
-        """Export up to 50 items using Zotero's built-in local translators."""
+        """Export up to 50 top-level items using Zotero's built-in local translators.
+
+        Child notes and attachments are not exported. In CSL JSON, id is the item's
+        citation key when available (otherwise an item URI), not a lookup key.
+        For per-key citation data use zotero_get_citation_items.
+        """
         if not 1 <= len(item_keys) <= 50:
             raise ValueError("Provide 1 to 50 item keys.")
-        result = self.zot.items(itemKey=",".join(key(k) for k in item_keys), format=format)
+        result = self.zot.top(
+            itemKey=",".join(key(k) for k in item_keys), format=format, limit=len(item_keys)
+        )
         return {
             "format": format,
             "content": result if format == "csljson" else self.zot.request.text,
