@@ -7,6 +7,12 @@
 - Use the matching Git tag format `v<version>`; do not hand-edit the generated version in `uv.lock` or `pyproject.toml`.
 - Verify with `uv lock --check`, tests, and the tag version workflow before publishing.
 
+## Language
+
+- Write all agent-facing text in English: tool and parameter descriptions, docstrings exposed through MCP, error messages, explanatory fields in results, and server instructions.
+- Write human-facing documentation in Chinese: `README.md`, `docs/**/*.md`, and ADRs. Code comments stay in English.
+- Chinese strings in tests are test data for Unicode handling; keep them.
+
 ## Architecture Decision Records
 
 - Record every architecture or interface decision as an ADR in `docs/adr/NNNN-short-title.md`, numbered sequentially. This includes decisions to defer or reject a change. Existing record: `docs/adr/0001-defer-dsh-compatible-output-schema.md`.
