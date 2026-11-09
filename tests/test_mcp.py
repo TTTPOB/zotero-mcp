@@ -6,6 +6,13 @@ from mcp.shared.memory import create_connected_server_and_client_session
 from zotero_mcp.server import READ_TOOLS, WRITE_TOOLS, build_server
 
 
+async def test_every_tool_parameter_has_a_description(library):
+    tools = await build_server(library).list_tools()
+    for tool in tools:
+        for name, schema in tool.inputSchema["properties"].items():
+            assert schema.get("description", "").strip(), (tool.name, name)
+
+
 async def test_protocol_discovery_read_write_and_shutdown(library, zot):
     server = build_server(library)
     async with create_connected_server_and_client_session(

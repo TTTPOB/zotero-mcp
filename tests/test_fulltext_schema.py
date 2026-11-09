@@ -30,6 +30,7 @@ async def test_fulltext_tools_expose_constrained_inputs_and_success(library, zot
     assert get_schema["offset"]["minimum"] == 0
     assert get_schema["max_characters"] == {
         "default": 20000,
+        "description": "Maximum Unicode code points per chunk (1–50,000).",
         "maximum": 50000,
         "minimum": 1,
         "title": "Max Characters",
@@ -55,6 +56,7 @@ async def test_original_attachment_tools_expose_safe_schemas_and_annotations(lib
     assert write.annotations.destructiveHint is False
     assert read.inputSchema["properties"]["max_characters"] == {
         "default": 50000,
+        "description": "Maximum Unicode code points per chunk (1–50,000).",
         "maximum": 50000,
         "minimum": 1,
         "title": "Max Characters",

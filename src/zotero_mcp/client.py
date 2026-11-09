@@ -461,14 +461,39 @@ class Library:
     @operation()
     def search_items(
         self,
-        query: str = "",
-        tags: list[ReadTag] | None = None,
-        item_type: str | None = None,
-        qmode: Literal["titleCreatorYear", "everything"] = "titleCreatorYear",
+        query: Annotated[
+            str, Field(description="Search text; omit only when supplying valid tags.")
+        ] = "",
+        tags: Annotated[
+            list[ReadTag] | None,
+            Field(
+                description="Tag filters combined with AND; each filter supports OR (a || b) and exclusion (-tag)."
+            ),
+        ] = None,
+        item_type: Annotated[
+            str | None,
+            Field(description="Native item-type filter; -attachment excludes attachment hits."),
+        ] = None,
+        qmode: Annotated[
+            Literal["titleCreatorYear", "everything"],
+            Field(
+                description="Search title/creator/year, or all searchable fields and indexed text with everything."
+            ),
+        ] = "titleCreatorYear",
         limit: ReadLimit = 25,
         offset: ReadOffset = 0,
-        tag_scope: Literal["matched_item", "parent", "either"] = "matched_item",
-        view: ReadView = "summary",
+        tag_scope: Annotated[
+            Literal["matched_item", "parent", "either"],
+            Field(
+                description="Apply tags to the native hit, its parent, or either level within the current native page."
+            ),
+        ] = "matched_item",
+        view: Annotated[
+            ReadView,
+            Field(
+                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
+            ),
+        ] = "summary",
     ) -> ItemPage:
         """Search requires a query or at least one valid tag.
 
@@ -551,7 +576,16 @@ class Library:
         )
 
     @operation()
-    def get_item_metadata(self, item_key: ReadItemKey, view: ReadView = "metadata") -> ItemMetadata:
+    def get_item_metadata(
+        self,
+        item_key: ReadItemKey,
+        view: Annotated[
+            ReadView,
+            Field(
+                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
+            ),
+        ] = "metadata",
+    ) -> ItemMetadata:
         """Read semantic metadata by default; use ``view='raw'`` for Zotero's object."""
         item = self.zot.item(key(item_key))
         return project_items([item], view)[0]
@@ -562,7 +596,12 @@ class Library:
         item_key: ReadItemKey,
         limit: ReadLimit = 25,
         offset: ReadOffset = 0,
-        view: ReadView = "summary",
+        view: Annotated[
+            ReadView,
+            Field(
+                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
+            ),
+        ] = "summary",
     ) -> ItemPage:
         """List an item's child attachments, notes or annotations."""
         return self._page(
@@ -583,7 +622,12 @@ class Library:
         collection_key: ReadItemKey,
         limit: ReadLimit = 25,
         offset: ReadOffset = 0,
-        view: ReadView = "summary",
+        view: Annotated[
+            ReadView,
+            Field(
+                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
+            ),
+        ] = "summary",
     ) -> ItemPage:
         """List collection items as summaries; request metadata or raw when needed."""
         return self._page(
@@ -600,7 +644,15 @@ class Library:
 
     @operation()
     def get_recent(
-        self, limit: ReadLimit = 25, offset: ReadOffset = 0, view: ReadView = "summary"
+        self,
+        limit: ReadLimit = 25,
+        offset: ReadOffset = 0,
+        view: Annotated[
+            ReadView,
+            Field(
+                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
+            ),
+        ] = "summary",
     ) -> ItemPage:
         """List all top-level items, including independent attachments, as summaries."""
         return self._page(
@@ -613,10 +665,18 @@ class Library:
     @operation()
     def get_notes(
         self,
-        parent_key: ReadItemKey | None = None,
+        parent_key: Annotated[
+            ReadItemKey | None,
+            Field(description="Parent item key to restrict notes; omit to list library notes."),
+        ] = None,
         limit: ReadLimit = 25,
         offset: ReadOffset = 0,
-        view: ReadView = "metadata",
+        view: Annotated[
+            ReadView,
+            Field(
+                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
+            ),
+        ] = "metadata",
     ) -> ItemPage:
         """Read notes, optionally restricted to a parent item."""
         params = {**pagination(limit, offset), "itemType": "note"}
@@ -631,7 +691,12 @@ class Library:
         attachment_key: ReadItemKey,
         limit: ReadLimit = 25,
         offset: ReadOffset = 0,
-        view: ReadView = "metadata",
+        view: Annotated[
+            ReadView,
+            Field(
+                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
+            ),
+        ] = "metadata",
     ) -> ItemPage:
         """Read Zotero reader annotations belonging to an attachment."""
         items = self.zot.children(
@@ -855,7 +920,12 @@ class Library:
         item_key: FulltextItemKey,
         offset: FulltextOffset = 0,
         max_characters: FulltextMaxCharacters = 20000,
-        attachment_key: FulltextAttachmentKey | None = None,
+        attachment_key: Annotated[
+            FulltextAttachmentKey | None,
+            Field(
+                description="Explicit attachment key to resolve selection; reuse the returned key for later chunks."
+            ),
+        ] = None,
         text_revision: FulltextRevision = None,
     ) -> FulltextChunk:
         """Read Zotero-indexed text from one stable attachment.
@@ -930,7 +1000,13 @@ class Library:
         )
 
     @operation()
-    def get_item_schema(self, item_type: str | None = None) -> dict[str, Any]:
+    def get_item_schema(
+        self,
+        item_type: Annotated[
+            str | None,
+            Field(description="Zotero item type to inspect; omit to list available item types."),
+        ] = None,
+    ) -> dict[str, Any]:
         """List item types, or fields and creator types for one type, from local Zotero."""
         if item_type is None:
             return {"item_types": self.zot.item_types()}
@@ -1066,7 +1142,15 @@ class Library:
 
     @operation(write=True)
     def update_item(
-        self, item_key: ItemKey, version: Version, changes: dict[str, Any]
+        self,
+        item_key: ItemKey,
+        version: Version,
+        changes: Annotated[
+            dict[str, Any],
+            Field(
+                description="Changed Zotero fields only; arrays replace whole arrays, so preserve entries you want to keep."
+            ),
+        ],
     ) -> WriteResponse:
         """Patch item metadata, a note or annotation using its last-read local version.
 
@@ -1114,10 +1198,19 @@ class Library:
     def create_note(
         self,
         parent_key: ItemKey,
-        text: str,
-        title: str = "",
-        as_html: bool = False,
-        tags: list[str] | None = None,
+        text: Annotated[
+            str, Field(description="Note body as plain text, or Zotero HTML when as_html is true.")
+        ],
+        title: Annotated[
+            str, Field(description="Optional note heading; escaped and prepended to the body.")
+        ] = "",
+        as_html: Annotated[
+            bool,
+            Field(description="Preserve the body as Zotero HTML instead of escaping plain text."),
+        ] = False,
+        tags: Annotated[
+            list[str] | None, Field(description="Tag names to assign to the new note.")
+        ] = None,
     ) -> WriteResponse:
         """Create a child note. Escape plain text by default; as_html preserves Zotero HTML."""
         content = text if as_html else "<p>" + html.escape(text).replace("\n", "<br/>") + "</p>"
@@ -1135,7 +1228,16 @@ class Library:
         )
 
     @operation(write=True)
-    def create_collection(self, name: str, parent_collection: str | None = None) -> WriteResponse:
+    def create_collection(
+        self,
+        name: Annotated[str, Field(description="Collection name.")],
+        parent_collection: Annotated[
+            str | None,
+            Field(
+                description="Parent collection key; omit or use an empty string to create at the root."
+            ),
+        ] = None,
+    ) -> WriteResponse:
         """Create a collection, optionally under a parent collection."""
         if not name.strip():
             raise ValueError("A collection name cannot be empty.")
@@ -1150,8 +1252,13 @@ class Library:
         self,
         collection_key: ItemKey,
         version: Version,
-        name: str | None = None,
-        parent_collection: str | None = None,
+        name: Annotated[str | None, Field(description="Collection name.")] = None,
+        parent_collection: Annotated[
+            str | None,
+            Field(
+                description="New parent collection key; empty string moves to root, null leaves the parent unchanged."
+            ),
+        ] = None,
     ) -> WriteResponse:
         """Rename/move a collection. Use parent_collection='' to move it to the root."""
         if name is None and parent_collection is None:
@@ -1274,8 +1381,13 @@ class Library:
     def batch_update_tags(
         self,
         item_keys: ItemKeyList,
-        add: list[str] | None = None,
-        remove: list[str] | None = None,
+        add: Annotated[
+            list[str] | None,
+            Field(description="Tag names to add, preserving existing tags and tag types."),
+        ] = None,
+        remove: Annotated[
+            list[str] | None, Field(description="Tag names to remove, preserving all other tags.")
+        ] = None,
     ) -> WriteResponse:
         """Add/remove tags while preserving other tags and tag types.
 
@@ -1305,7 +1417,12 @@ class Library:
         self,
         collection_key: ItemKey,
         item_keys: ItemKeyList,
-        action: Literal["add", "remove"],
+        action: Annotated[
+            Literal["add", "remove"],
+            Field(
+                description="Add or remove collection membership; removing does not delete items."
+            ),
+        ],
     ) -> WriteResponse:
         """Add/remove up to 50 items from a collection, preserving other memberships.
 
@@ -1486,7 +1603,18 @@ class Library:
 
     @operation(write=True)
     def attach_file(
-        self, parent_key: ItemKey, file_path: str, title: str | None = None
+        self,
+        parent_key: ItemKey,
+        file_path: Annotated[
+            str,
+            Field(
+                description="Absolute path to an existing local file to copy into Zotero attachment storage."
+            ),
+        ],
+        title: Annotated[
+            str | None,
+            Field(description="Attachment title; omit or use an empty string to use the filename."),
+        ] = None,
     ) -> WriteResponse:
         """Copy an existing absolute-path file into Zotero's local attachment storage."""
         return self._attach_file(parent_key, file_path, title)

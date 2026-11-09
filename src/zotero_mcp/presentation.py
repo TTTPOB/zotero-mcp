@@ -11,10 +11,25 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
 ReadView = Literal["summary", "metadata", "raw"]
-ReadItemKey = Annotated[str, Field(min_length=8, max_length=8, pattern=r"^[A-Za-z0-9]{8}$")]
-ReadLimit = Annotated[int, Field(ge=1, le=100)]
-ReadOffset = Annotated[int, Field(ge=0)]
-ReadTag = Annotated[str, Field(min_length=1)]
+ReadItemKey = Annotated[
+    str,
+    Field(
+        description="Zotero item or collection key.",
+        min_length=8,
+        max_length=8,
+        pattern=r"^[A-Za-z0-9]{8}$",
+    ),
+]
+ReadLimit = Annotated[int, Field(description="Maximum records per page (1–100).", ge=1, le=100)]
+ReadOffset = Annotated[
+    int,
+    Field(
+        description="Zero-based native result offset; continue with the returned next_offset.", ge=0
+    ),
+]
+ReadTag = Annotated[
+    str, Field(description="Tag filter: a || b means OR; -tag excludes a tag.", min_length=1)
+]
 
 
 def _serialize_value(value: Any) -> Any:

@@ -5,19 +5,77 @@ from typing import Annotated, Any
 from pydantic import Field
 from typing_extensions import TypedDict
 
-FulltextItemKey = Annotated[str, Field(min_length=8, max_length=8, pattern=r"^[A-Za-z0-9]{8}$")]
-FulltextAttachmentKey = Annotated[
-    str, Field(min_length=8, max_length=8, pattern=r"^[A-Za-z0-9]{8}$")
+FulltextItemKey = Annotated[
+    str,
+    Field(
+        description="Parent item or attachment key for indexed text.",
+        min_length=8,
+        max_length=8,
+        pattern=r"^[A-Za-z0-9]{8}$",
+    ),
 ]
-FulltextOffset = Annotated[int, Field(ge=0)]
-FulltextMaxCharacters = Annotated[int, Field(ge=1, le=50000)]
-FulltextContextCharacters = Annotated[int, Field(ge=0, le=5000)]
-FulltextMaxMatches = Annotated[int, Field(ge=1, le=100)]
-FulltextQuery = Annotated[str, Field(min_length=1)]
-FulltextRevision = Annotated[str | None, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
-AttachmentTextContent = Annotated[str, Field(min_length=1, max_length=50_000_000)]
-AttachmentTextOffset = Annotated[int, Field(ge=0)]
-AttachmentTextMaxCharacters = Annotated[int, Field(ge=1, le=50000)]
+FulltextAttachmentKey = Annotated[
+    str,
+    Field(
+        description="Explicit attachment key; use the returned attachment_key when continuing.",
+        min_length=8,
+        max_length=8,
+        pattern=r"^[A-Za-z0-9]{8}$",
+    ),
+]
+FulltextOffset = Annotated[
+    int,
+    Field(
+        description="Zero-based Unicode code point offset; continue with returned next_offset.",
+        ge=0,
+    ),
+]
+FulltextMaxCharacters = Annotated[
+    int, Field(description="Maximum Unicode code points per chunk (1–50,000).", ge=1, le=50000)
+]
+FulltextContextCharacters = Annotated[
+    int,
+    Field(
+        description="Unicode code points of context on each side of a match (0–5,000).",
+        ge=0,
+        le=5000,
+    ),
+]
+FulltextMaxMatches = Annotated[
+    int, Field(description="Maximum matches to return (1–100).", ge=1, le=100)
+]
+FulltextQuery = Annotated[
+    str,
+    Field(
+        description="Case-insensitive literal text to find in this attachment; not a regular expression.",
+        min_length=1,
+    ),
+]
+FulltextRevision = Annotated[
+    str | None,
+    Field(
+        description="Reuse the returned text_revision for later reads; a changed index requires restarting.",
+        pattern=r"^sha256:[0-9a-f]{64}$",
+    ),
+]
+AttachmentTextContent = Annotated[
+    str,
+    Field(
+        description="Markdown text to store as paper-chew-fulltext.md; UTF-8 encoding must not exceed 50 MiB.",
+        min_length=1,
+        max_length=50_000_000,
+    ),
+]
+AttachmentTextOffset = Annotated[
+    int,
+    Field(
+        description="Zero-based Unicode code point offset; continue with returned next_offset.",
+        ge=0,
+    ),
+]
+AttachmentTextMaxCharacters = Annotated[
+    int, Field(description="Maximum Unicode code points per chunk (1–50,000).", ge=1, le=50000)
+]
 
 
 class FulltextCandidate(TypedDict):

@@ -6,11 +6,34 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-ItemKey = Annotated[str, Field(min_length=8, max_length=8, pattern=r"^[A-Za-z0-9]{8}$")]
-Version = Annotated[int, Field(ge=0)]
-ItemKeyList = Annotated[list[ItemKey], Field(min_length=1, max_length=50)]
+ItemKey = Annotated[
+    str,
+    Field(
+        description="Zotero item or collection key.",
+        min_length=8,
+        max_length=8,
+        pattern=r"^[A-Za-z0-9]{8}$",
+    ),
+]
+Version = Annotated[
+    int,
+    Field(
+        description="Last-read LOCAL version of the item or collection; never use a cloud version.",
+        ge=0,
+    ),
+]
+ItemKeyList = Annotated[
+    list[ItemKey], Field(description="1–50 Zotero item keys.", min_length=1, max_length=50)
+]
 ItemData = dict[str, Any]
-ItemDataList = Annotated[list[ItemData], Field(min_length=1, max_length=50)]
+ItemDataList = Annotated[
+    list[ItemData],
+    Field(
+        description="1–50 new Zotero item-data objects; use get_item_schema to check fields.",
+        min_length=1,
+        max_length=50,
+    ),
+]
 
 WriteStatus = Literal["success", "unchanged", "failed", "pending", "unknown"]
 WriteStage = Literal["create", "upload"]
