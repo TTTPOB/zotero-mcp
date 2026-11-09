@@ -4,7 +4,7 @@
 
 ## 选择附件
 
-可以传入父文献的 `item_key`，也可以显式传入 `attachment_key`。
+可以传入父文献的 `item_key`，也可以显式传入 `attachment_key`。`find_item_fulltext` 的 `attachment_key` 同样接受父文献 key，使用与本节相同的选择规则（共用同一段代码），成功结果中的 `attachment_key` 是实际选中的附件；候选有歧义时同样返回 `FULLTEXT_ATTACHMENT_AMBIGUOUS`。
 
 - 显式 `attachment_key` 优先，适合补充材料、不同版本或连续阅读。
 - 如果父条目的 `links.enclosure` 已包含附件 key，且该 key 严格匹配子附件候选，使用该附件作为首选。这里只解析已有链接，不请求其 URL。
@@ -49,11 +49,15 @@
 - `index_coverage.indexed_pages` / `total_pages` 是 Zotero 报告的索引页数。缺失时为 `null`，不会从附件类型或页数推断。索引页数不保证表格、公式、图片文字或文本顺序准确。
 - `reading_coverage.start` / `end` 是本次返回片段在完整索引文本中的 code point 区间，`reached_end` 表示本次片段是否触及文本末尾，`complete` 只有在本次片段从 0 开始并覆盖到末尾时才为 true。它表示本工具返回给调用者的阅读范围，不表示已经读完论文。
 
-没有可读索引时返回 `FULLTEXT_NOT_INDEXED`。该错误不代表附件不存在，只表示此次 Zotero 全文端点没有可用文本。
+没有可读索引时返回 `FULLTEXT_NOT_INDEXED`。该错误不代表附件不存在，只表示此次 Zotero 全文端点没有可用文本。Zotero 对“尚未索引”“永远不会索引”“key 根本不是附件”都返回同一个 404，因此工具在失败后再读取该 key 的条目元数据来区分：
+
+- key 是笔记或批注：返回 `INVALID_ARGUMENT`，提示改用 `get_item_metadata`/`get_notes`（笔记）或 `get_annotations`（批注）读取，独立笔记和子笔记相同。key 是集合返回 `INVALID_ARGUMENT`，不存在返回 `NOT_FOUND`。
+- 附件是链接 URL 或图片/音频/视频：`details.reason=not_indexable`，`retryable=false`。
+- 其他附件按 `dateAdded` 判断：十分钟内为 `details.reason=indexing_pending`、`retryable=true`，建议稍后重试；更早的为 `not_indexed`、`retryable=false`，建议在 Zotero 中重建索引。这是启发式判断，Zotero 没有公开索引队列状态；没有文本层的扫描 PDF 也会落入 `not_indexed`。
 
 ## 附件内查找
 
-`zotero_find_item_fulltext` 用于在一个**显式附件**的 Zotero 索引文本内跳读：
+`zotero_find_item_fulltext` 用于在**一个附件**的 Zotero 索引文本内跳读（传父文献 key 时自动选择附件，规则同上）：
 
 ```json
 {
@@ -64,7 +68,7 @@
 }
 ```
 
-匹配规则固定为 Unicode `casefold` 后的字面量子串匹配：大小写不敏感，不使用正则表达式，不搜索父文献或整个资料库；重叠的不同原文区间会保留，casefold 展开造成的相同原文区间只计一次。结果中的 `start` 和 `end` 是原始未修改文本的 0 起始 code point 区间，`snippet_start`、`snippet_end` 是上下文片段在同一原文中的实际区间。`match_count` 是本次返回的数量，`total_matches` 是完整扫描后的唯一区间数量；达到 `max_matches` 时以 `has_more=true`、`truncated=true` 明确提示仍有结果。`text_revision` 可按连续读取的相同方式校验正文没有变化。
+匹配规则固定为 Unicode `casefold` 后的字面量子串匹配：大小写不敏感，不使用正则表达式，不搜索整个资料库；重叠的不同原文区间会保留，casefold 展开造成的相同原文区间只计一次。结果中的 `start` 和 `end` 是原始未修改文本的 0 起始 code point 区间，`snippet_start`、`snippet_end` 是上下文片段在同一原文中的实际区间。`match_count` 是本次返回的数量，`total_matches` 是完整扫描后的唯一区间数量；达到 `max_matches` 时以 `has_more=true`、`truncated=true` 明确提示仍有结果。`text_revision` 可按连续读取的相同方式校验正文没有变化。
 
 该能力仍会让 Zotero 返回指定附件的完整索引文本，再在 MCP 进程内定位片段；它是轻量跳读工具，不是新的全文索引、向量检索或 PDF 解析器。
 

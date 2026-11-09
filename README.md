@@ -76,7 +76,7 @@ HTTP 使用 SDK 的无状态 Streamable HTTP：每个请求独立处理，不保
 - `qmode="everything"` 默认包含附件命中。结果保留原生命中对象及 `parent_key`，不合并成父文献；`tag_scope` 明确标签筛选作用于命中对象、父条目或任一层级。详见 [读取视图与搜索](docs/read-views.md)。
 - 整个查询是 DOI（含 `doi:`、doi.org 链接）或 ISBN-10/13 时，`search_items` 只返回 DOI/ISBN 字段完全相等的条目，并在 `identifier_lookup` 里说明匹配方式；没有则 `found=false`。
 - 批量操作可能部分成功。逐项检查 `results` 中的输入索引、key 和状态，不要重发已成功条目。结果未知时先检查 Zotero；附件创建后上传失败会保留已创建的 key。详见 [错误与写入恢复](docs/errors-and-writes.md)。
-- 全文来自 Zotero 自己的索引。多个候选附件无法确定时需指定附件 key；续读使用返回的附件 key 和 `text_revision`。`find_item_fulltext` 可在指定附件中找词并返回真实字符位置。没有全文时在 Zotero 中索引附件；本项目不执行 OCR。详见 [全文阅读契约](docs/fulltext-reading.md)。
+- 全文来自 Zotero 自己的索引。多个候选附件无法确定时需指定附件 key；续读使用返回的附件 key 和 `text_revision`。`find_item_fulltext` 可在一个附件（或父文献自动选出的附件）中找词并返回真实字符位置。没有全文时先看错误的 `details.reason`：刚添加的附件 `retryable=true`，稍后重试；否则在 Zotero 中重建索引。本项目不执行 OCR。详见 [全文阅读契约](docs/fulltext-reading.md)。
 - 不兼容上游全部工具名和配置。完整工具列表见 [工具说明](docs/tools.md)，本次改造的验证结果与边界见 [接口验收记录](docs/interface-review-acceptance.md)。
 
 ## 开发检查

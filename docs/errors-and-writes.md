@@ -22,11 +22,12 @@
 
 当前稳定代码：
 
-- `INVALID_ARGUMENT`：参数、输入字段或 MCP 输入校验不通过。`message` 只有一两句话，写明参数路径（如 `item_keys[3]`）、问题和改法；多个问题时列出前 3 条并注明总数。`details` 是前 5 条的 `type`、`loc`、`msg`，不回显输入值，也不带 pydantic 文档链接。`search_items` 的 `item_type` 不是 Zotero 已知类型时同样返回此码，见 [ADR 0006](adr/0006-short-argument-errors.md)。 `add_items` 和 `update_item` 都在写入前拒绝未知字段名，`add_items` 整批不写；校验用 Zotero 所有条目类型的字段并集，不检查字段是否属于该条目类型。
-- `NOT_FOUND`：条目、集合或附件不存在；`get_collection_items` 传入不存在的集合 key 也返回它，不会退回整库条目；`get_item_children`、`get_notes`（指定父条目时）、`get_annotations` 传入不存在的 key（包括集合 key）也返回它，而不是空列表。写入工具 `update_item`、`delete_item`、`update_collection`、`delete_collection` 对不存在的 key 也返回它，`message` 带上 key 并建议重新搜索；其中 `update_item` 和 `update_collection` 会先确认对象存在再写入，避免 Zotero 按不存在的 key 新建条目或集合。
+- `INVALID_ARGUMENT`：参数、输入字段或 MCP 输入校验不通过。`message` 只有一两句话，写明参数路径（如 `item_keys[3]`）、问题和改法；多个问题时列出前 3 条并注明总数。`details` 是前 5 条的 `type`、`loc`、`msg`，不回显输入值，也不带 pydantic 文档链接。`search_items` 的 `item_type` 不是 Zotero 已知类型时同样返回此码，见 [ADR 0006](adr/0006-short-argument-errors.md)。`add_items` 和 `update_item` 都在写入前拒绝未知字段名，`add_items` 整批不写；校验用 Zotero 所有条目类型的字段并集，不检查字段是否属于该条目类型。全文工具收到笔记、批注、集合或（作为 `attachment_key` 的）父条目 key 时也返回它，`details.key` 保留该 key，`details.item_type` 或 `details.kind` 说明实际类型。
+- `NOT_FOUND`：条目、集合或附件不存在；`get_collection_items` 传入不存在的集合 key 也返回它，不会退回整库条目；`get_item_children`、`get_notes`（指定父条目时）、`get_annotations` 传入不存在的 key（包括集合 key）也返回它，而不是空列表。写入工具 `update_item`、`delete_item`、`update_collection`、`delete_collection` 对不存在的 key 也返回它，`message` 带上 key 并建议重新搜索；其中 `update_item` 和 `update_collection` 会先确认对象存在再写入，避免 Zotero 按不存在的 key 新建条目或集合。全文工具收到不存在的 key 时也返回它，`details.key` 保留该 key。
 - `NOT_CITABLE`：条目不能作为引用。`get_citation_items` 对子笔记、子附件、批注在该项上附带 `parent_key`（改用父条目），对独立笔记/附件不带；`export_items` 请求含子条目时也返回它（整个调用失败，`details.items` 逐项列出 `key`、`code`、`parent_key`）。
 - `NO_INDEX`：通用的无索引错误；全文工具使用更具体的 `FULLTEXT_NOT_INDEXED`。
-- `FULLTEXT_NOT_INDEXED`：全文工具没有可读取的附件索引，并在 `details.attachment_key` 保留来源。
+- `FULLTEXT_NOT_INDEXED`：全文工具没有可读取的附件索引，并在 `details.attachment_key` 保留来源。`details.reason` 区分三种情况：`indexing_pending`（附件十分钟内刚添加，Zotero 可能仍在建立索引，`retryable=true`，稍后重试同一个 key）、`not_indexable`（链接 URL 或图片/音频/视频附件，不会被索引，`retryable=false`，换一个附件）、`not_indexed`（其余情况，`retryable=false`，在 Zotero 中重建索引）。Zotero 对这三种情况的全文请求都只返回同样的 404，所以这是根据附件元数据做的判断。
+- `FULLTEXT_ATTACHMENT_NOT_FOUND`：父条目没有任何附件。
 - `FULLTEXT_ATTACHMENT_AMBIGUOUS`：自动选择有歧义，候选附件在 `details.candidates`。
 - `FULLTEXT_REVISION_MISMATCH`：连续读取的文本 revision 已变化，`details` 保留 expected/actual。
 - `UNAUTHORIZED`：本地授权缺失、撤销或被 Zotero 拒绝。

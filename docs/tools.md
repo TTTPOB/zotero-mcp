@@ -16,7 +16,7 @@
 | `get_notes` | 读取笔记，可指定父条目（父条目不存在返回 `NOT_FOUND`） |
 | `get_annotations` | 读取指定附件的 Zotero 批注（附件 key 不存在返回 `NOT_FOUND`） |
 | `get_item_fulltext` | 读取选定附件的 Zotero 索引文本，按字符分页并校验文本版本 |
-| `find_item_fulltext` | 在指定附件的索引文本中查找字面量，返回附近片段和原文字符位置 |
+| `find_item_fulltext` | 在一个附件（或父文献自动选出的附件）的索引文本中查找字面量，返回附近片段和原文字符位置 |
 | `read_attachment_text` | 从安全的 Markdown/text 附件读取原始 UTF-8 文件内容，不使用 Zotero 索引 |
 | `get_item_schema` | 从本地 Zotero 查询条目类型、字段和作者类型 |
 | `export_items` | 通过本地 Zotero 导出顶层条目的 BibTeX、RIS、CSL JSON，不包含子笔记/附件 |
@@ -32,7 +32,7 @@
 
 全文工具接受论文或附件 key。传父文献时透明选择附件；无法确定时返回候选清单，再指定 `attachment_key`。续读传回实际附件 key 和 `text_revision`，文本改变会要求重新开始。偏移以 0 起始 Unicode code point 计数，`max_characters` 为 1–50,000。索引页数和本次返回的文本范围分别表达，不表示 Agent 已通读附件。
 
-`find_item_fulltext` 只查指定附件，使用不区分大小写的字面量匹配，返回片段及原文字符位置，不进行全库扫描。`read_attachment_text` 则读取附件文件本身：正常接受 `text/markdown` 或 `text/plain` 以及 `.md`、`.markdown`、`.txt` 扩展名；兼容旧的 `.md/.markdown` generic MIME，但仍要求原始 bytes 通过二进制签名、UTF-8 和 50 MiB 检查。它返回原始 bytes 的 SHA-256，不使用索引的 `text_revision`。详见 [读取视图](read-views.md) 与 [全文阅读](fulltext-reading.md)。
+`find_item_fulltext` 只查一个附件（可传附件 key，或父文献 key 自动选择附件），使用不区分大小写的字面量匹配，返回片段及原文字符位置，不进行全库扫描。`read_attachment_text` 则读取附件文件本身：正常接受 `text/markdown` 或 `text/plain` 以及 `.md`、`.markdown`、`.txt` 扩展名；兼容旧的 `.md/.markdown` generic MIME，但仍要求原始 bytes 通过二进制签名、UTF-8 和 50 MiB 检查。它返回原始 bytes 的 SHA-256，不使用索引的 `text_revision`。详见 [读取视图](read-views.md) 与 [全文阅读](fulltext-reading.md)。
 
 批量元数据：`get_item_metadata` 接受 `item_keys`（1–50 个，不再有单数 `item_key`），按输入顺序（包括重复 key）返回 `{"items": [...]}`；每项为 `{index, key, status, item}`，`status` 为 `ok` 时 `item` 是所选视图的条目，找不到的 key 为 `status: "error"` 并带 `error.code = "NOT_FOUND"`，其余 key 不受影响。它读取 `/items` 而不是 `/items/top`，所以子笔记和附件同样可读；结果只包含请求的 key，不会混入其子条目。
 

@@ -72,6 +72,10 @@ async def test_protocol_write_412_keeps_version_conflict(library, zot):
 
 async def test_protocol_no_index_preserves_attachment_key(library, zot):
     zot.fulltext_item.side_effect = ResourceNotFoundError("unindexed")
+    zot.item.side_effect = lambda item_key: {
+        "key": item_key,
+        "data": {"itemType": "attachment", "contentType": "application/pdf"},
+    }
     async with create_connected_server_and_client_session(
         build_server(library), read_timeout_seconds=timedelta(seconds=10)
     ) as session:
@@ -82,9 +86,13 @@ async def test_protocol_no_index_preserves_attachment_key(library, zot):
     assert result.isError is True
     assert result.structuredContent["error"] == {
         "code": "FULLTEXT_NOT_INDEXED",
-        "message": "No indexed text is available for this attachment. Index it in Zotero first.",
+        "message": (
+            "No indexed text is available for this attachment. If it was just added, Zotero "
+            "may still be indexing it and a later retry can work; otherwise rebuild the index "
+            "in Zotero (scanned PDFs without a text layer are never indexed)."
+        ),
         "retryable": False,
-        "details": {"attachment_key": "ATTACH01"},
+        "details": {"attachment_key": "ATTACH01", "reason": "not_indexed"},
     }
     assert json.loads(result.content[0].text) == result.structuredContent
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Iterable, Mapping
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlparse
 
@@ -88,7 +89,7 @@ def select_attachment(
     if not candidates:
         raise FulltextError(
             "FULLTEXT_ATTACHMENT_NOT_FOUND",
-            "No indexed attachment text is available. Index the attachment in Zotero first or provide an attachment key.",
+            "This item has no attachments, so there is no text to read.",
             details={"parent_key": parent_key, "candidates": []},
         )
     if preferred_attachment_key:
@@ -122,6 +123,70 @@ def select_attachment(
             "candidate_count": len(candidates),
             "candidates": limited_candidates,
         },
+    )
+
+
+# Zotero indexes asynchronously after an attachment is added; this long after
+# dateAdded, an empty index is more likely a real gap than work in progress.
+RECENT_ATTACHMENT_WINDOW = timedelta(minutes=10)
+_UNINDEXABLE_CONTENT_PREFIXES = ("image/", "audio/", "video/")
+
+
+def _recently_added(data: Mapping[str, Any], now: datetime | None) -> bool:
+    added = data.get("dateAdded")
+    if not isinstance(added, str):
+        return False
+    try:
+        added_at = datetime.fromisoformat(added.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if added_at.tzinfo is None:
+        added_at = added_at.replace(tzinfo=UTC)
+    current = now or datetime.now(UTC)
+    return timedelta(0) <= current - added_at < RECENT_ATTACHMENT_WINDOW
+
+
+def unindexed_attachment_error(
+    attachment_key: str, attachment: Mapping[str, Any], *, now: datetime | None = None
+) -> FulltextError:
+    """Explain why an attachment has no indexed text and whether waiting can help.
+
+    Zotero answers 404 for a missing index whatever the cause, so this inspects the
+    attachment: a linked URL or media file is never indexed (not retryable); a
+    recently added file may still be queued (retryable); anything else is probably
+    not indexed and needs a reindex in Zotero (not retryable).
+    """
+    data = _attachment_data(attachment)
+    link_mode = data.get("linkMode") if isinstance(data.get("linkMode"), str) else None
+    content_type = data.get("contentType") if isinstance(data.get("contentType"), str) else None
+    details: dict[str, Any] = {"attachment_key": attachment_key}
+    if link_mode == "linked_url" or (
+        content_type and content_type.lower().startswith(_UNINDEXABLE_CONTENT_PREFIXES)
+    ):
+        details.update(reason="not_indexable", link_mode=link_mode, content_type=content_type)
+        return FulltextError(
+            "FULLTEXT_NOT_INDEXED",
+            "This attachment is a link or a media file, which Zotero does not index, so it "
+            "has no text to read. Choose another attachment.",
+            details=details,
+        )
+    if _recently_added(data, now):
+        details["reason"] = "indexing_pending"
+        return FulltextError(
+            "FULLTEXT_NOT_INDEXED",
+            "No indexed text is available yet. The attachment was added recently and Zotero "
+            "may still be indexing it; try again in a few seconds. If it stays empty, "
+            "rebuild the index in Zotero.",
+            retryable=True,
+            details=details,
+        )
+    details["reason"] = "not_indexed"
+    return FulltextError(
+        "FULLTEXT_NOT_INDEXED",
+        "No indexed text is available for this attachment. If it was just added, Zotero may "
+        "still be indexing it and a later retry can work; otherwise rebuild the index in "
+        "Zotero (scanned PDFs without a text layer are never indexed).",
+        details=details,
     )
 
 

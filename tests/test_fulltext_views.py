@@ -191,9 +191,13 @@ def test_offset_beyond_text_is_rejected_before_returning_invalid_interval():
 
 def test_unindexed_explicit_attachment_has_actionable_error(library, zot):
     zot.fulltext_item.side_effect = ResourceNotFoundError("unindexed")
+    zot.item.side_effect = lambda item_key: {
+        "key": item_key,
+        "data": {"itemType": "attachment", "contentType": "application/pdf"},
+    }
 
     with pytest.raises(FulltextError) as caught:
         library.get_item_fulltext("ABCD1234", attachment_key="ATTACH01")
 
     assert caught.value.code == "FULLTEXT_NOT_INDEXED"
-    assert caught.value.details == {"attachment_key": "ATTACH01"}
+    assert caught.value.details == {"attachment_key": "ATTACH01", "reason": "not_indexed"}

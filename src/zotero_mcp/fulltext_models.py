@@ -23,6 +23,16 @@ FulltextAttachmentKey = Annotated[
         pattern=r"^[A-Za-z0-9]{8}$",
     ),
 ]
+FulltextFindKey = Annotated[
+    str,
+    Field(
+        description="Attachment key to search, or a parent item key to select its attachment "
+        "the same way get_item_fulltext does.",
+        min_length=8,
+        max_length=8,
+        pattern=r"^[A-Za-z0-9]{8}$",
+    ),
+]
 FulltextOffset = Annotated[
     int,
     Field(

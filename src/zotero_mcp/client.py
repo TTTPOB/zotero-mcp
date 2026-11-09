@@ -50,6 +50,7 @@ from zotero_mcp.fulltext import (
     preferred_attachment_key,
     select_attachment,
     text_revision,
+    unindexed_attachment_error,
 )
 from zotero_mcp.fulltext_models import (
     AttachmentTextChunk,
@@ -59,6 +60,7 @@ from zotero_mcp.fulltext_models import (
     FulltextAttachmentKey,
     FulltextChunk,
     FulltextContextCharacters,
+    FulltextFindKey,
     FulltextFindResult,
     FulltextItemKey,
     FulltextMaxCharacters,
@@ -1151,24 +1153,97 @@ class Library:
             "content_sha256": hashlib.sha256(raw).hexdigest(),
         }
 
-    def _read_indexed_attachment(self, attachment_key: str) -> tuple[str, dict[str, Any]]:
-        """Read one attachment; callers decide whether selecting it is allowed."""
+    def _fetch_index(self, attachment_key: str) -> tuple[str, dict[str, Any]] | None:
+        """Return indexed text, or None when Zotero has no usable index for this key."""
         try:
             response = self.zot.fulltext_item(attachment_key)
-        except ResourceNotFoundError as exc:
-            raise FulltextError(
-                "FULLTEXT_NOT_INDEXED",
-                "No indexed text is available for this attachment. Index it in Zotero first.",
-                details={"attachment_key": attachment_key},
-            ) from exc
+        except ResourceNotFoundError:
+            return None
         content, response = parse_fulltext_response(response, attachment_key=attachment_key)
-        if not content:
-            raise FulltextError(
-                "FULLTEXT_NOT_INDEXED",
-                "No indexed text is available for this attachment. Index it in Zotero first.",
-                details={"attachment_key": attachment_key},
+        return (content, response) if content else None
+
+    def _fulltext_lookup(self, item_key: str) -> Mapping[str, Any]:
+        """Fetch the item behind a fulltext key, naming the key's real kind on failure."""
+        try:
+            return self.zot.item(item_key)
+        except ResourceNotFoundError:
+            pass
+        try:
+            self.zot.collection(item_key)
+        except ResourceNotFoundError:
+            raise LibraryError(
+                NOT_FOUND,
+                "No Zotero item has this key.",
+                details={"key": item_key},
+            ) from None
+        raise LibraryError(
+            INVALID_ARGUMENT,
+            "This key belongs to a collection, not an item. Fulltext tools need a "
+            "paper key or an attachment key; list a collection with get_collection_items.",
+            details={"key": item_key, "kind": "collection"},
+        )
+
+    @staticmethod
+    def _reject_non_text_item(item_key: str, item: Mapping[str, Any]) -> None:
+        """Notes and annotations never have indexed text; say where to read them."""
+        data = item.get("data")
+        item_type = data.get("itemType") if isinstance(data, Mapping) else None
+        if item_type == "note":
+            raise LibraryError(
+                INVALID_ARGUMENT,
+                "This key is a note, and notes have no indexed fulltext. Read its text "
+                "with get_item_metadata or get_notes.",
+                details={"key": item_key, "item_type": "note"},
             )
-        return content, response
+        if item_type == "annotation":
+            raise LibraryError(
+                INVALID_ARGUMENT,
+                "This key is an annotation, and annotations have no indexed fulltext. "
+                "Read annotations with get_annotations on their attachment.",
+                details={"key": item_key, "item_type": "annotation"},
+            )
+
+    def _select_fulltext_attachment(
+        self, item_key: str, item: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        """Pick the attachment of a parent item; shared by every fulltext tool."""
+        attachments = self.zot.everything(self.zot.children(item_key, itemType="attachment"))
+        return select_attachment(
+            attachments,
+            parent_key=item_key,
+            preferred_attachment_key=preferred_attachment_key(item),
+        )
+
+    def _read_indexed_attachment(
+        self, key_: str, *, resolve_parent: bool = False
+    ) -> tuple[str, str, dict[str, Any]]:
+        """Read indexed text; return (attachment_key, content, index response).
+
+        With resolve_parent, a parent item key is accepted and mapped to one of its
+        attachments by the same rules as get_item_fulltext. The common case (a real
+        attachment key) costs one request; the item is fetched only after a miss.
+        """
+        indexed = self._fetch_index(key_)
+        if indexed is not None:
+            return key_, *indexed
+        item = self._fulltext_lookup(key_)
+        data = item.get("data")
+        if isinstance(data, Mapping) and data.get("itemType") == "attachment":
+            raise unindexed_attachment_error(key_, item)
+        self._reject_non_text_item(key_, item)
+        if not resolve_parent:
+            raise LibraryError(
+                INVALID_ARGUMENT,
+                "This key is a parent item, not an attachment. Pass it as item_key, or "
+                "pass one of its attachment keys.",
+                details={"key": key_, "kind": "parent_item"},
+            )
+        selected = self._select_fulltext_attachment(key_, item)
+        selected_key = key(selected["key"])
+        indexed = self._fetch_index(selected_key)
+        if indexed is None:
+            raise unindexed_attachment_error(selected_key, selected)
+        return selected_key, *indexed
 
     @staticmethod
     def _check_text_revision(content: str, expected: str | None, *, attachment_key: str) -> str:
@@ -1213,21 +1288,14 @@ class Library:
         if attachment_key is not None:
             selected_key = key(attachment_key)
         else:
-            item = self.zot.item(item_key)
+            item = self._fulltext_lookup(item_key)
             if item.get("data", {}).get("itemType") == "attachment":
                 selected_key = item_key
             else:
-                attachments = self.zot.everything(
-                    self.zot.children(item_key, itemType="attachment")
-                )
-                selected = select_attachment(
-                    attachments,
-                    parent_key=item_key,
-                    preferred_attachment_key=preferred_attachment_key(item),
-                )
-                selected_key = key(selected["key"])
+                self._reject_non_text_item(item_key, item)
+                selected_key = key(self._select_fulltext_attachment(item_key, item)["key"])
 
-        content, response = self._read_indexed_attachment(selected_key)
+        _, content, response = self._read_indexed_attachment(selected_key)
         self._check_text_revision(content, text_revision, attachment_key=selected_key)
         return make_chunk(
             attachment_key=selected_key,
@@ -1240,15 +1308,16 @@ class Library:
     @operation()
     def find_item_fulltext(
         self,
-        attachment_key: FulltextAttachmentKey,
+        attachment_key: FulltextFindKey,
         query: FulltextQuery,
         context_characters: FulltextContextCharacters = 120,
         max_matches: FulltextMaxMatches = 20,
         text_revision: FulltextRevision = None,
     ) -> FulltextFindResult:
-        """Find literal, case-insensitive text in one explicitly named attachment.
+        """Find literal, case-insensitive text in one attachment.
 
-        Match and snippet positions are zero-based Unicode code points in the
+        Pass an attachment key, or a parent item key to select its attachment the same
+        way get_item_fulltext does. Match and snippet positions are zero-based Unicode code points in the
         unmodified Zotero index text. This does not search parent items or the
         whole library, and does not use regular expressions.
         """
@@ -1259,7 +1328,9 @@ class Library:
             raise ValueError("context_characters must be between 0 and 5000.")
         if type(max_matches) is not int or not 1 <= max_matches <= 100:
             raise ValueError("max_matches must be between 1 and 100.")
-        content, response = self._read_indexed_attachment(attachment_key)
+        attachment_key, content, response = self._read_indexed_attachment(
+            attachment_key, resolve_parent=True
+        )
         self._check_text_revision(content, text_revision, attachment_key=attachment_key)
         return make_find_result(
             attachment_key=attachment_key,
