@@ -160,6 +160,26 @@ def test_parent_tag_scope_is_explicit_and_bounded(library, zot):
     zot.item.assert_called_once_with("PAPER001")
 
 
+@pytest.mark.parametrize("blank", ["", "   ", "\t\n"])
+def test_blank_item_type_is_treated_as_omitted(library, zot, blank):
+    library.search_items("everything term", qmode="everything", item_type=blank)
+    assert "itemType" not in zot.items.call_args.kwargs
+
+    library.search_items("title term", item_type=blank)
+    # The metadata-search default still applies when no item type is given.
+    assert zot.items.call_args.kwargs["itemType"] == "-attachment"
+
+
+def test_explicit_item_type_is_sent_and_non_string_is_rejected(library, zot):
+    library.search_items("term", qmode="everything", item_type=" -attachment ")
+    assert zot.items.call_args.kwargs["itemType"] == "-attachment"
+
+    zot.items.reset_mock()
+    with pytest.raises(ValueError):
+        library.search_items("term", item_type=[])
+    zot.items.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [{"view": []}, {"qmode": []}, {"tag_scope": []}],

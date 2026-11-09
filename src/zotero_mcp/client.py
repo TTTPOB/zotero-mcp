@@ -474,7 +474,9 @@ class Library:
         ] = None,
         item_type: Annotated[
             str | None,
-            Field(description="Native item-type filter; -attachment excludes attachment hits."),
+            Field(
+                description="Native item-type filter; -attachment excludes attachment hits. Empty or blank counts as not provided."
+            ),
         ] = None,
         qmode: Annotated[
             Literal["titleCreatorYear", "everything"],
@@ -532,8 +534,10 @@ class Library:
             raise ValueError("tags must be a list of non-empty strings.")
         if tags is not None and any(not isinstance(tag, str) or not tag.strip() for tag in tags):
             raise ValueError("tags must be a list of non-empty strings.")
-        if item_type is not None and (not isinstance(item_type, str) or not item_type.strip()):
-            raise ValueError("item_type must be a non-empty string when provided.")
+        if item_type is not None and not isinstance(item_type, str):
+            raise ValueError("item_type must be a string when provided.")
+        # An empty or whitespace-only item_type means "no filter", like omitting it.
+        item_type = item_type.strip() if item_type and item_type.strip() else None
 
         params = pagination(limit, offset)
         params.update(q=query, qmode=qmode)

@@ -24,7 +24,7 @@
 
 搜索、最近条目、集合条目、子条目列表默认使用 `view=summary`；`view=metadata` 保留语义元数据，`view=raw` 返回原生记录。笔记和批注列表默认 metadata，保留正文。视图不截断完整标题、不静默隐藏独立附件，也不从附件存在推断索引可读。
 
-搜索需要 `query` 或有效 `tags` 至少一项，tags-only 合法。`qmode=everything` 默认不排除附件，显式 `item_type` 筛选原生命中对象；结果提供父 key，保持上游顺序而不合并父子条目。`tag_scope=matched_item`（默认）由 Zotero 筛选命中对象的标签，`parent` / `either` 在当前原生页内检查相应层级。
+搜索需要 `query` 或有效 `tags` 至少一项，tags-only 合法。`qmode=everything` 默认不排除附件，显式 `item_type` 筛选原生命中对象（空字符串或纯空白等同于不传）；结果提供父 key，保持上游顺序而不合并父子条目。`tag_scope=matched_item`（默认）由 Zotero 筛选命中对象的标签，`parent` / `either` 在当前原生页内检查相应层级。
 
 按 DOI/ISBN/URL 或其他非标题字段查找时，使用 `qmode="everything"` 配合 `item_type="-attachment"`，并核对返回的 `doi` 是否与目标 DOI 一致；默认模式可能漏掉 DOI，不排除附件则可能命中引用该 DOI 的其他论文全文。
 

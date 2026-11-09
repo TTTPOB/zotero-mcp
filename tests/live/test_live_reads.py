@@ -39,6 +39,16 @@ def test_search_items_everything_mode_hits_attachment_with_parent(mcp, seed):
     assert hit["matched_attachment_key"] == seed.pdf
 
 
+def test_search_items_blank_item_type_means_no_filter(mcp, seed):
+    plain = mcp("search_items", {"query": "Live alpha paper"})
+    for blank in ("", "   "):
+        page = mcp("search_items", {"query": "Live alpha paper", "item_type": blank})
+        assert keys(page) == keys(plain)
+        # In everything mode a blank item_type must not hide attachment hits.
+        hits = mcp("search_items", {"query": PDF_NEEDLE, "qmode": "everything", "item_type": blank})
+        assert seed.pdf in keys(hits)
+
+
 def test_get_item_metadata_semantic_and_raw(mcp, seed):
     item = mcp("get_item_metadata", {"item_key": seed.alpha})
     assert item["key"] == seed.alpha
