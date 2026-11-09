@@ -107,3 +107,18 @@ def test_listing_past_the_last_child_keeps_the_real_total(mcp, seed):
     page = mcp("get_item_children", {"item_key": seed.alpha, "offset": 50})
     assert page["items"] == []
     assert page["total"] == 2  # the PDF and the note, not the 1 of the existence check
+
+
+def test_get_citation_items_tells_children_from_unknown_keys(mcp, seed):
+    keys_in = [seed.note, seed.pdf, seed.annotation, seed.parent, "ZZZZZZZZ", seed.alpha]
+    entries = mcp("get_citation_items", {"item_keys": keys_in})["items"]
+    note, pdf, annotation, collection, missing, alpha = entries
+    assert (note["error"]["code"], note["parent_key"]) == ("NOT_CITABLE", seed.alpha)
+    assert (pdf["error"]["code"], pdf["parent_key"]) == ("NOT_CITABLE", seed.alpha)
+    assert (annotation["error"]["code"], annotation["parent_key"]) == ("NOT_CITABLE", seed.pdf)
+    for entry in (collection, missing):
+        assert entry["error"]["code"] == "NOT_FOUND"
+        assert entry["parent_key"] is None
+    for entry in (note, pdf, annotation, collection, missing):
+        assert "/items/top" not in entry["error"]["message"]
+    assert alpha["status"] == "ok"

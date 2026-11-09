@@ -245,5 +245,6 @@ def test_get_citation_items_per_key_status(mcp, seed):
     assert alpha["select_link"] == f"zotero://select/library/items/{seed.alpha}"
     assert alpha["csl"]["DOI"] == "10.5555/live.alpha"
     assert note["status"] == "error"
-    assert note["error"]["code"] in {"NOT_CITABLE", "NOT_FOUND"}
+    assert note["error"]["code"] == "NOT_CITABLE"
+    assert note["parent_key"] == seed.alpha
     assert missing["error"]["code"] == "NOT_FOUND"

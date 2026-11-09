@@ -1146,6 +1146,32 @@ class Library:
             "'-attachment'.",
         )
 
+    def _lookup_items(self, item_keys: list[str]) -> dict[str, Any]:
+        """Look up keys in one batch request to see which exist (children included).
+
+        /items/top hides child notes, attachments and annotations; /items returns them,
+        so a key that is absent here does not exist. Zotero also returns the children of
+        every match, so only the requested keys are kept.
+        """
+        wanted = set(item_keys)
+        found = self.zot.everything(self.zot.items(itemKey=",".join(sorted(wanted)), limit=100))
+        return {item["key"]: item for item in found if item.get("key") in wanted}
+
+    @staticmethod
+    def _child_failure(item: Mapping[str, Any]) -> tuple[str, str, str]:
+        """Return (code, parent_key, message) for a child item that cannot be used."""
+        data = item.get("data", {})
+        parent_key = data.get("parentItem") or ""
+        item_type = data.get("itemType", "item")
+        if item_type == "annotation":
+            advice = (
+                f"Annotation of attachment {parent_key}; the paper that owns the attachment "
+                "is the item to cite."
+            )
+        else:
+            advice = f"Child {item_type} of {parent_key}; use the parent item key {parent_key}."
+        return NOT_CITABLE, parent_key, advice
+
     @operation()
     def get_citation_items(
         self,
@@ -1165,17 +1191,26 @@ class Library:
         keys = [key(k) for k in item_keys]
         returned = self.zot.top(itemKey=",".join(keys), include="data,csljson", limit=len(keys))
         by_key = {item["key"]: item for item in returned}
+        # /items/top never lists child items; one batch request tells them from keys
+        # that do not exist. It is only made when some key is missing from the first.
+        absent = list(dict.fromkeys(k for k in keys if k not in by_key))
+        children = self._lookup_items(absent) if absent else {}
         entries = []
         for index, item_key in enumerate(keys):
-            entry = {"index": index, "key": item_key}
+            entry: dict[str, Any] = {"index": index, "key": item_key}
             try:
                 item = by_key.get(item_key)
                 if item is None:
-                    raise LibraryError(
-                        NOT_FOUND,
-                        "Item is missing from /items/top or is a child note/attachment "
-                        "that cannot be cited.",
-                    )
+                    child = children.get(item_key)
+                    if child is None:
+                        raise LibraryError(
+                            NOT_FOUND,
+                            "No item with this key exists in the library (a collection key "
+                            "is not an item key).",
+                        )
+                    code, parent_key, message = self._child_failure(child)
+                    entry["parent_key"] = parent_key
+                    raise LibraryError(code, message)
                 data = item.get("data", {})
                 item_type = data.get("itemType", "")
                 if item_type in {"note", "attachment", "annotation"}:

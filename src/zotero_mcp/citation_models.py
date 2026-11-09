@@ -27,6 +27,8 @@ class CitationItemFailure(BaseModel):
     key: str
     status: Literal["error"]
     error: CitationItemError
+    # Set for child notes, attachments and annotations: the item to use instead.
+    parent_key: str | None = None
 
 
 class CitationItemsResult(BaseModel):
