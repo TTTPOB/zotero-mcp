@@ -77,7 +77,7 @@ def test_factory_connection_error_is_not_unknown_write():
 
     library = Library(factory)
     with pytest.raises(LibraryError) as raised:
-        library.get_item_metadata("ABCD1234")
+        library.get_item_metadata(["ABCD1234"])
     assert raised.value.code == CONNECTION_ERROR
     assert raised.value.retryable is True
     assert library._zot is None
@@ -97,9 +97,9 @@ def test_known_exception_codes_are_not_hidden_by_http_causes(library, zot):
     with pytest.raises(LibraryError) as raised:
         library.update_item("ABCD1234", 7, {"title": "new"})
     assert raised.value.code == VERSION_CONFLICT
-    zot.item.side_effect = ResourceNotFoundError("missing")
+    zot.items.side_effect = ResourceNotFoundError("missing")
     with pytest.raises(LibraryError) as raised:
-        library.get_item_metadata("ABCD1234")
+        library.get_item_metadata(["ABCD1234"])
     assert raised.value.code == NOT_FOUND
 
 

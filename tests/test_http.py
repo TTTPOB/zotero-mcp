@@ -131,7 +131,7 @@ async def test_stateless_http_survives_requests_and_service_rebuild(library, zot
         "jsonrpc": "2.0",
         "id": 2,
         "method": "tools/call",
-        "params": {"name": "zotero_get_item_metadata", "arguments": {"item_key": "ABCD1234"}},
+        "params": {"name": "zotero_get_item_metadata", "arguments": {"item_keys": ["ABCD1234"]}},
     }
 
     server = build_server(library)
@@ -146,12 +146,18 @@ async def test_stateless_http_survives_requests_and_service_rebuild(library, zot
             assert initialize_response.headers["content-type"].startswith("text/event-stream")
 
             _, first_call = await _post_rpc(client, call)
-            assert first_call["result"]["structuredContent"]["key"] == "ABCD1234"
+            assert (
+                first_call["result"]["structuredContent"]["items"][0]["item"]["key"] == "ABCD1234"
+            )
             _, second_call = await _post_rpc(client, {**call, "id": 3})
-            assert second_call["result"]["structuredContent"]["key"] == "ABCD1234"
+            assert (
+                second_call["result"]["structuredContent"]["items"][0]["item"]["key"] == "ABCD1234"
+            )
 
             _, legacy_call = await _post_rpc(client, {**call, "id": 4}, session_id="legacy-session")
-            assert legacy_call["result"]["structuredContent"]["key"] == "ABCD1234"
+            assert (
+                legacy_call["result"]["structuredContent"]["items"][0]["item"]["key"] == "ABCD1234"
+            )
             zot.client.close.assert_not_called()
 
     zot.client.close.assert_called_once()
@@ -164,7 +170,9 @@ async def test_stateless_http_survives_requests_and_service_rebuild(library, zot
             _, rebuilt_call = await _post_rpc(
                 client, {**call, "id": 5}, session_id="legacy-session"
             )
-            assert rebuilt_call["result"]["structuredContent"]["key"] == "ABCD1234"
+            assert (
+                rebuilt_call["result"]["structuredContent"]["items"][0]["item"]["key"] == "ABCD1234"
+            )
             assert zot.client.close.call_count == 1
 
     assert zot.client.close.call_count == 2
@@ -192,10 +200,10 @@ async def test_http_session_serves_tools_without_authentication(library, zot):
                         f"zotero_{name}" for name in READ_TOOLS + WRITE_TOOLS
                     }
                     read_result = await session.call_tool(
-                        "zotero_get_item_metadata", {"item_key": "ABCD1234"}
+                        "zotero_get_item_metadata", {"item_keys": ["ABCD1234"]}
                     )
                     assert not read_result.isError
-                    assert read_result.structuredContent["key"] == "ABCD1234"
+                    assert read_result.structuredContent["items"][0]["item"]["key"] == "ABCD1234"
                     write_result = await session.call_tool(
                         "zotero_update_item",
                         {"item_key": "ABCD1234", "version": 7, "changes": {"title": "中文更新"}},

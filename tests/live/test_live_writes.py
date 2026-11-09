@@ -1,6 +1,6 @@
 """Every write MCP tool against a real Zotero, each verified by reading the library back."""
 
-from live_support import TEXT_NEEDLE
+from live_support import TEXT_NEEDLE, read_item
 
 
 def keys(page):
@@ -8,11 +8,11 @@ def keys(page):
 
 
 def tag_names(mcp, key):
-    return {t["tag"] for t in mcp("get_item_metadata", {"item_key": key})["data"]["tags"]}
+    return {t["tag"] for t in read_item(mcp, key)["data"]["tags"]}
 
 
 def version_of(mcp, key):
-    return mcp("get_item_metadata", {"item_key": key})["version"]
+    return read_item(mcp, key)["version"]
 
 
 def test_add_items_creates_readable_items(mcp):
@@ -28,8 +28,8 @@ def test_add_items_creates_readable_items(mcp):
     assert result["ok"] and result["status"] == "success"
     assert [entry["input_index"] for entry in result["results"]] == [0, 1]
     first, second = (entry["key"] for entry in result["results"])
-    assert mcp("get_item_metadata", {"item_key": first})["data"]["title"] == "Live added one"
-    assert mcp("get_item_metadata", {"item_key": second})["item_type"] == "book"
+    assert read_item(mcp, first)["data"]["title"] == "Live added one"
+    assert read_item(mcp, second)["item_type"] == "book"
     assert tag_names(mcp, second) == {"live-added"}
 
 
@@ -44,7 +44,7 @@ def test_add_items_reports_invalid_entries(mcp):
     assert (good["input_index"], good["status"]) == (0, "success")
     assert (bad["input_index"], bad["status"]) == (1, "failed")
     assert "nonsense" in bad["error"]["message"]
-    assert mcp("get_item_metadata", {"item_key": good["key"]})["data"]["title"] == "Live ok"
+    assert read_item(mcp, good["key"])["data"]["title"] == "Live ok"
 
 
 def test_update_item_changes_only_given_fields(mcp, new_item):
@@ -54,7 +54,7 @@ def test_update_item_changes_only_given_fields(mcp, new_item):
         {"item_key": key, "version": version, "changes": {"title": "Live renamed"}},
     )
     assert result["ok"] and result["key"] == key
-    item = mcp("get_item_metadata", {"item_key": key})["data"]
+    item = read_item(mcp, key)["data"]
     assert item["title"] == "Live renamed"
     assert item["date"] == "2020"
 
@@ -68,14 +68,15 @@ def test_update_item_with_stale_version_is_a_conflict(mcp, new_item):
         error=True,
     )
     assert result["error"]["code"] == "VERSION_CONFLICT"
-    assert mcp("get_item_metadata", {"item_key": key})["data"]["title"] == "first"
+    assert read_item(mcp, key)["data"]["title"] == "first"
 
 
 def test_delete_item_removes_it(mcp, new_item):
     key, version = new_item()
     result = mcp("delete_item", {"item_key": key, "version": version})
     assert result["ok"] and result["key"] == key
-    missing = mcp("get_item_metadata", {"item_key": key}, error=True)
+    missing = mcp("get_item_metadata", {"item_keys": [key]})["items"][0]
+    assert missing["status"] == "error"
     assert missing["error"]["code"] == "NOT_FOUND"
 
 
@@ -86,7 +87,7 @@ def test_create_note_is_a_child_note_with_tags(mcp, new_item):
         {"parent_key": parent, "text": "line one\nline <two>", "title": "Heading", "tags": ["n1"]},
     )
     note_key = result["results"][0]["key"]
-    note = mcp("get_item_metadata", {"item_key": note_key})
+    note = read_item(mcp, note_key)
     assert note["parent_key"] == parent
     html = note["data"]["note"]
     assert "<h1>Heading</h1>" in html and "&lt;two&gt;" in html
@@ -166,7 +167,7 @@ def test_manage_collection_items_add_and_remove_top_level_items(mcp, new_item):
     assert removed["updated"] == [first]
     assert keys(mcp("get_collection_items", {"collection_key": collection})) == [second]
     # Removing membership never deletes the item.
-    assert mcp("get_item_metadata", {"item_key": first})["key"] == first
+    assert read_item(mcp, first)["key"] == first
 
 
 def test_attach_file_stores_a_readable_copy(mcp, new_item, tmp_path):
@@ -176,7 +177,7 @@ def test_attach_file_stores_a_readable_copy(mcp, new_item, tmp_path):
     result = mcp("attach_file", {"parent_key": parent, "file_path": str(source), "title": "Mine"})
     assert result["ok"] and result["stage"] == "upload"
     attachment = result["attachment_key"]
-    metadata = mcp("get_item_metadata", {"item_key": attachment})
+    metadata = read_item(mcp, attachment)
     assert metadata["parent_key"] == parent
     assert metadata["data"]["title"] == "Mine"
     assert metadata["data"]["linkMode"] == "imported_file"

@@ -60,7 +60,7 @@ from zotero_mcp.fulltext_models import (
 )
 from zotero_mcp.models import ItemDataList, ItemKey, ItemKeyList, Version, WriteResponse
 from zotero_mcp.presentation import (
-    ItemMetadata,
+    ItemMetadataBatch,
     ItemPage,
     ReadItemKey,
     ReadLimit,
@@ -588,17 +588,50 @@ class Library:
     @operation()
     def get_item_metadata(
         self,
-        item_key: ReadItemKey,
+        item_keys: Annotated[
+            ItemKeyList,
+            Field(
+                description="1–50 Zotero item keys, including child notes and attachments; results retain input order and duplicates."
+            ),
+        ],
         view: Annotated[
             ReadView,
             Field(
                 description="Result projection: summary, full semantic metadata, or native Zotero raw records."
             ),
         ] = "metadata",
-    ) -> ItemMetadata:
-        """Read semantic metadata by default; use ``view='raw'`` for Zotero's object."""
-        item = self.zot.item(key(item_key))
-        return project_items([item], view)[0]
+    ) -> ItemMetadataBatch:
+        """Read 1–50 items by key; each result is ``{index, key, status, item | error}``.
+
+        ``items`` follows the input order (duplicates included). A key Zotero does not
+        return has status ``error`` with code NOT_FOUND. Child notes and attachments
+        are readable. ``item`` is semantic metadata by default; use ``view='raw'``
+        for Zotero's native object.
+        """
+        normalize_view(view)
+        if not 1 <= len(item_keys) <= 50:
+            raise ValueError("Provide 1 to 50 item keys.")
+        keys = [key(k) for k in item_keys]
+        wanted = set(keys)
+        # Not /items/top: child items must be readable. Zotero also returns the
+        # children of each requested item here, so keep only the requested keys.
+        # The limit is explicit (pyzotero defaults to 100); everything() follows
+        # the remaining pages when children push results past one page.
+        returned = self.zot.everything(self.zot.items(itemKey=",".join(sorted(wanted)), limit=100))
+        by_key = {item["key"]: item for item in returned if item.get("key") in wanted}
+        entries = []
+        for index, item_key in enumerate(keys):
+            entry: dict[str, Any] = {"index": index, "key": item_key}
+            item = by_key.get(item_key)
+            if item is None:
+                entry.update(
+                    status="error",
+                    error={"code": NOT_FOUND, "message": "Item was not found in the library."},
+                )
+            else:
+                entry.update(status="ok", item=project_items([item], view)[0])
+            entries.append(entry)
+        return {"items": entries}
 
     @operation()
     def get_item_children(

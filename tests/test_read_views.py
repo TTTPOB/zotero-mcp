@@ -90,11 +90,10 @@ def test_enclosure_candidate_requires_explicit_item_path(href, expected):
 
 def test_metadata_is_semantic_and_raw_is_unchanged(library, zot):
     native = _native_item("PAPER001", abstract="Long abstract")
-    zot.item.side_effect = None
-    zot.item.return_value = native
+    zot.items.return_value = [native]
 
-    metadata = library.get_item_metadata("paper001")
-    raw = library.get_item_metadata("PAPER001", view="raw")
+    metadata = library.get_item_metadata(["paper001"])["items"][0]["item"]
+    raw = library.get_item_metadata(["PAPER001"], view="raw")["items"][0]["item"]
 
     assert metadata == {
         "key": "PAPER001",

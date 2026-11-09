@@ -40,12 +40,29 @@ async def test_protocol_input_validation_uses_same_machine_error(library, zot):
     zot.update_item.assert_not_called()
 
 
-async def test_protocol_not_found_error_is_structured(library, zot):
-    zot.item.side_effect = ResourceNotFoundError("missing")
+async def test_protocol_missing_metadata_key_is_a_per_key_error(library, zot):
+    zot.items.return_value = []
     async with create_connected_server_and_client_session(
         build_server(library), read_timeout_seconds=timedelta(seconds=10)
     ) as session:
-        result = await session.call_tool("zotero_get_item_metadata", {"item_key": "ABCD1234"})
+        result = await session.call_tool("zotero_get_item_metadata", {"item_keys": ["ABCD1234"]})
+    assert result.isError is False
+    assert result.structuredContent["items"] == [
+        {
+            "index": 0,
+            "key": "ABCD1234",
+            "status": "error",
+            "error": {"code": "NOT_FOUND", "message": "Item was not found in the library."},
+        }
+    ]
+
+
+async def test_protocol_not_found_error_is_structured(library, zot):
+    zot.children.side_effect = ResourceNotFoundError("missing")
+    async with create_connected_server_and_client_session(
+        build_server(library), read_timeout_seconds=timedelta(seconds=10)
+    ) as session:
+        result = await session.call_tool("zotero_get_item_children", {"item_key": "ABCD1234"})
     assert result.isError is True
     assert result.structuredContent["error"]["code"] == "NOT_FOUND"
     assert json.loads(result.content[0].text) == result.structuredContent

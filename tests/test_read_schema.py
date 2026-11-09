@@ -25,11 +25,14 @@ async def test_read_tools_publish_models_and_input_constraints(library, zot):
         assert page_schema["$defs"]["ItemSummary"]["properties"]["match_details_available"]
 
         metadata_schema = tools["zotero_get_item_metadata"].outputSchema
-        assert metadata_schema["title"] == "ItemMetadata"
-        key_schema = tools["zotero_get_item_metadata"].inputSchema["properties"]["item_key"]
-        assert key_schema["minLength"] == 8
-        assert key_schema["maxLength"] == 8
-        assert key_schema["pattern"] == r"^[A-Za-z0-9]{8}$"
+        assert metadata_schema["title"] == "ItemMetadataBatch"
+        keys_schema = tools["zotero_get_item_metadata"].inputSchema["properties"]["item_keys"]
+        assert keys_schema["minItems"] == 1
+        assert keys_schema["maxItems"] == 50
+        assert keys_schema["items"]["minLength"] == 8
+        assert keys_schema["items"]["maxLength"] == 8
+        assert keys_schema["items"]["pattern"] == r"^[A-Za-z0-9]{8}$"
+        assert "item_key" not in tools["zotero_get_item_metadata"].inputSchema["properties"]
         search_input = tools["zotero_search_items"].inputSchema["properties"]
         assert search_input["limit"]["minimum"] == 1
         assert search_input["limit"]["maximum"] == 100
@@ -46,8 +49,7 @@ async def test_summary_metadata_raw_and_query_error_are_protocol_safe(library, z
         "data": {"itemType": "book", "title": "Full title", "abstractNote": "Text"},
     }
     zot.top.return_value = [native]
-    zot.item.side_effect = None
-    zot.item.return_value = native
+    zot.items.return_value = [native]
 
     async with create_connected_server_and_client_session(
         build_server(library), read_timeout_seconds=timedelta(seconds=10)
@@ -58,16 +60,17 @@ async def test_summary_metadata_raw_and_query_error_are_protocol_safe(library, z
         assert summary.structuredContent["items"][0]["title"] == "Full title"
         assert "match" not in summary.structuredContent["items"][0]
 
-        metadata = await session.call_tool("zotero_get_item_metadata", {"item_key": "abcd1234"})
+        metadata = await session.call_tool("zotero_get_item_metadata", {"item_keys": ["abcd1234"]})
         assert metadata.isError is False
-        assert metadata.structuredContent["key"] == "ABCD1234"
-        assert metadata.structuredContent["data"]["abstractNote"] == "Text"
+        item = metadata.structuredContent["items"][0]["item"]
+        assert item["key"] == "ABCD1234"
+        assert item["data"]["abstractNote"] == "Text"
 
         raw = await session.call_tool(
-            "zotero_get_item_metadata", {"item_key": "abcd1234", "view": "raw"}
+            "zotero_get_item_metadata", {"item_keys": ["abcd1234"], "view": "raw"}
         )
         assert raw.isError is False
-        assert raw.structuredContent == native
+        assert raw.structuredContent["items"][0]["item"] == native
 
         raw_list = await session.call_tool("zotero_get_recent", {"limit": 1, "view": "raw"})
         assert raw_list.isError is False

@@ -99,6 +99,22 @@ class ItemPage(_FieldsSetModel):
     total: int | None = None
 
 
+class ItemMetadataEntry(_FieldsSetModel):
+    """Per-key outcome of a batch metadata read; ``item`` is set when status is ok."""
+
+    index: int
+    key: str
+    status: Literal["ok", "error"]
+    item: dict[str, Any] | ItemMetadata | None = None
+    error: dict[str, str] | None = None
+
+
+class ItemMetadataBatch(_FieldsSetModel):
+    """Batch metadata result in input order, including duplicates."""
+
+    items: list[ItemMetadataEntry] = Field(default_factory=list)
+
+
 class TagEntry(_FieldsSetModel):
     """One tag name, shaped like the ``{"tag": ...}`` objects on item data."""
 

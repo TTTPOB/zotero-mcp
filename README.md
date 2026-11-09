@@ -72,7 +72,7 @@ HTTP 使用 SDK 的无状态 Streamable HTTP：每个请求独立处理，不保
 - 授权文件保存在 Windows 的 `%LOCALAPPDATA%\zotero-mcp\local-auth.json`，包含本地 key 与 server ID。不要提交或分享。密钥撤销或切换 Zotero profile 后，重新执行 `authorize`，再重启 MCP。
 - 更新/删除前读取条目的 `version`；程序使用本地版本号防止覆盖并发修改。不要传入云端版本号。
 - `delete_item` 和 `delete_collection` **永久删除**，不会移入回收站。删除集合会移除子集合，保留文献。
-- 搜索、最近条目、集合条目和子条目列表默认返回精简 `summary`，保留完整标题和可调用的 key。需要摘要、完整作者、标签等数据时用 `view="metadata"`；需要原生 Zotero 对象时用 `view="raw"`。单条 `get_item_metadata` 默认返回 metadata；summary 不能整份写回，`changes` 仍是字段补丁。
+- 搜索、最近条目、集合条目和子条目列表默认返回精简 `summary`，保留完整标题和可调用的 key。需要摘要、完整作者、标签等数据时用 `view="metadata"`；需要原生 Zotero 对象时用 `view="raw"`。批量读取时 `get_item_metadata` 接受 1–50 个 `item_keys`，按输入顺序逐项返回（找不到的 key 标记 `NOT_FOUND`），默认返回 metadata；summary 不能整份写回，`changes` 仍是字段补丁。
 - `qmode="everything"` 默认包含附件命中。结果保留原生命中对象及 `parent_key`，不合并成父文献；`tag_scope` 明确标签筛选作用于命中对象、父条目或任一层级。详见 [读取视图与搜索](docs/read-views.md)。
 - 批量操作可能部分成功。逐项检查 `results` 中的输入索引、key 和状态，不要重发已成功条目。结果未知时先检查 Zotero；附件创建后上传失败会保留已创建的 key。详见 [错误与写入恢复](docs/errors-and-writes.md)。
 - 全文来自 Zotero 自己的索引。多个候选附件无法确定时需指定附件 key；续读使用返回的附件 key 和 `text_revision`。`find_item_fulltext` 可在指定附件中找词并返回真实字符位置。没有全文时在 Zotero 中索引附件；本项目不执行 OCR。详见 [全文阅读契约](docs/fulltext-reading.md)。

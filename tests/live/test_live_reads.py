@@ -1,6 +1,6 @@
 """Every read-only MCP tool against a real Zotero."""
 
-from live_support import PDF_NEEDLE, TEXT_NEEDLE
+from live_support import PDF_NEEDLE, TEXT_NEEDLE, read_item
 
 
 def keys(page):
@@ -50,7 +50,7 @@ def test_search_items_blank_item_type_means_no_filter(mcp, seed):
 
 
 def test_get_item_metadata_semantic_and_raw(mcp, seed):
-    item = mcp("get_item_metadata", {"item_key": seed.alpha})
+    item = read_item(mcp, seed.alpha)
     assert item["key"] == seed.alpha
     assert isinstance(item["version"], int)
     assert item["item_type"] == "journalArticle"
@@ -58,23 +58,41 @@ def test_get_item_metadata_semantic_and_raw(mcp, seed):
     assert item["data"]["citationKey"] == "livealpha2024"
     assert {"live-seed", "live-alpha"} <= {t["tag"] for t in item["data"]["tags"]}
 
-    raw = mcp("get_item_metadata", {"item_key": seed.alpha, "view": "raw"})
+    raw = read_item(mcp, seed.alpha, view="raw")
     assert raw["key"] == seed.alpha
     assert "links" in raw and "meta" in raw
 
 
 def test_get_item_metadata_reads_child_items(mcp, seed):
-    attachment = mcp("get_item_metadata", {"item_key": seed.pdf})
+    attachment = read_item(mcp, seed.pdf)
     assert attachment["item_type"] == "attachment"
     assert attachment["parent_key"] == seed.alpha
-    note = mcp("get_item_metadata", {"item_key": seed.note})
+    note = read_item(mcp, seed.note)
     assert note["item_type"] == "note"
     assert note["parent_key"] == seed.alpha
 
 
 def test_get_item_metadata_unknown_key_is_not_found(mcp):
-    result = mcp("get_item_metadata", {"item_key": "ZZZZZZZZ"}, error=True)
-    assert result["error"]["code"] == "NOT_FOUND"
+    entry = mcp("get_item_metadata", {"item_keys": ["ZZZZZZZZ"]})["items"][0]
+    assert entry["status"] == "error"
+    assert entry["error"]["code"] == "NOT_FOUND"
+
+
+def test_get_item_metadata_batch_keeps_order_and_requested_keys_only(mcp, seed):
+    requested = [seed.pdf, "ZZZZZZZZ", seed.alpha, seed.pdf]
+    entries = mcp("get_item_metadata", {"item_keys": requested})["items"]
+
+    assert [entry["index"] for entry in entries] == [0, 1, 2, 3]
+    assert [entry["key"] for entry in entries] == requested
+    assert [entry["status"] for entry in entries] == ["ok", "error", "ok", "ok"]
+    assert entries[0]["item"]["parent_key"] == seed.alpha
+    assert entries[1]["error"]["code"] == "NOT_FOUND"
+    assert entries[2]["item"]["key"] == seed.alpha
+    assert entries[3]["item"] == entries[0]["item"]
+
+    # Zotero also returns the children of a requested parent; they must not leak in.
+    only_parent = mcp("get_item_metadata", {"item_keys": [seed.alpha]})["items"]
+    assert [entry["key"] for entry in only_parent] == [seed.alpha]
 
 
 def test_get_item_children(mcp, seed):

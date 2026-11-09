@@ -1,5 +1,7 @@
 """Regression tests for behavior that was wrong against a real Zotero (fixed in stage 3)."""
 
+from live_support import read_item
+
 
 def keys(page):
     return [item["key"] for item in page["items"]]
@@ -48,4 +50,4 @@ def test_adding_child_items_to_a_collection_is_rejected_before_any_write(mcp, se
     assert rejected == {(seed.pdf, seed.alpha), (seed.note, seed.alpha)}
     # The whole batch is refused: the valid top-level item was not written either.
     assert mcp("get_collection_items", {"collection_key": collection})["items"] == []
-    assert mcp("get_item_metadata", {"item_key": top})["data"]["collections"] == []
+    assert read_item(mcp, top)["data"]["collections"] == []

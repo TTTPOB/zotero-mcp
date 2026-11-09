@@ -7,7 +7,7 @@
 | 工具 | 用途 |
 | --- | --- |
 | `search_items` | 搜索标题/作者/年份、标签；`qmode=everything` 包含 Zotero 索引的文本 |
-| `get_item_metadata` | 默认读取语义元数据、`key` 和本地 `version`；`view=raw` 获取原生对象 |
+| `get_item_metadata` | 一次按 `item_keys`（1–50 个）读取语义元数据、`key` 和本地 `version`，子笔记/附件也可读；`view=raw` 获取原生对象 |
 | `get_item_children` | 列出子附件、笔记或批注 |
 | `get_collections` | 列出集合及其父集合和版本 |
 | `get_collection_items` | 列出直接属于某集合的条目 |
@@ -33,6 +33,8 @@
 全文工具接受论文或附件 key。传父文献时透明选择附件；无法确定时返回候选清单，再指定 `attachment_key`。续读传回实际附件 key 和 `text_revision`，文本改变会要求重新开始。偏移以 0 起始 Unicode code point 计数，`max_characters` 为 1–50,000。索引页数和本次返回的文本范围分别表达，不表示 Agent 已通读附件。
 
 `find_item_fulltext` 只查指定附件，使用不区分大小写的字面量匹配，返回片段及原文字符位置，不进行全库扫描。`read_attachment_text` 则读取附件文件本身：正常接受 `text/markdown` 或 `text/plain` 以及 `.md`、`.markdown`、`.txt` 扩展名；兼容旧的 `.md/.markdown` generic MIME，但仍要求原始 bytes 通过二进制签名、UTF-8 和 50 MiB 检查。它返回原始 bytes 的 SHA-256，不使用索引的 `text_revision`。详见 [读取视图](read-views.md) 与 [全文阅读](fulltext-reading.md)。
+
+批量元数据：`get_item_metadata` 接受 `item_keys`（1–50 个，不再有单数 `item_key`），按输入顺序（包括重复 key）返回 `{"items": [...]}`；每项为 `{index, key, status, item}`，`status` 为 `ok` 时 `item` 是所选视图的条目，找不到的 key 为 `status: "error"` 并带 `error.code = "NOT_FOUND"`，其余 key 不受影响。它读取 `/items` 而不是 `/items/top`，所以子笔记和附件同样可读；结果只包含请求的 key，不会混入其子条目。
 
 每次 `get_citation_items` 接受 1–50 个 key，按输入顺序（包括重复 key）返回逐项状态。Word/LibreOffice 的 Zotero 字段使用 `uri`（必须以 `http://zotero.org/` 开头）；笔记链接使用 `select_link`，Pandoc/LaTeX 使用 `citation_key` 和 `csl`。不要把 `links.alternate.href` 网页地址作为引用 URI。没有 citation key 时返回 null，不自行生成；CSL 对象保持原样，其 `id` 可能是 citation key，不是查询用的条目 key。缺失 key 或子笔记/附件返回 `NOT_FOUND`，独立笔记/附件/批注返回 `NOT_CITABLE`，无效 CSL 数据返回 `CITATION_DATA_INVALID`。
 

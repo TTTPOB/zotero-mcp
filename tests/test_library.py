@@ -43,7 +43,7 @@ def test_blank_search_fails(library, zot):
 
 def test_read_without_write_permission(library, zot):
     zot.local_api_key = None
-    assert library.get_item_metadata("abcd1234")["key"] == "ABCD1234"
+    assert library.get_item_metadata(["abcd1234"])["items"][0]["item"]["key"] == "ABCD1234"
     with pytest.raises(ValueError, match="authorize"):
         library.create_note("ABCD1234", "note")
     zot.create_items.assert_not_called()
@@ -54,8 +54,8 @@ def test_cloud_factory_rejected():
     zot = Mock(local=False)
     library = Library(lambda: zot)
     with pytest.raises(ValueError, match="local API"):
-        library.get_item_metadata("ABCD1234")
-    zot.item.assert_not_called()
+        library.get_item_metadata(["ABCD1234"])
+    zot.items.assert_not_called()
     zot.client.close.assert_called_once()
 
 

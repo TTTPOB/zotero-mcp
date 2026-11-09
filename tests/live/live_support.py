@@ -29,3 +29,11 @@ def minimal_pdf(text: str) -> bytes:
 
 PDF_NEEDLE = "livepdfneedle"
 TEXT_NEEDLE = "livetextneedle"
+
+
+def read_item(mcp, key: str, **arguments) -> dict:
+    """Read one item through get_item_metadata and return the item of its only result."""
+    result = mcp("get_item_metadata", {"item_keys": [key], **arguments})
+    entry = result["items"][0]
+    assert entry["status"] == "ok", entry
+    return entry["item"]

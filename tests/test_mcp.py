@@ -28,9 +28,11 @@ async def test_protocol_discovery_read_write_and_shutdown(library, zot):
         required = tools["zotero_update_item"].inputSchema["required"]
         assert set(required) == {"item_key", "version", "changes"}
 
-        read = await session.call_tool("zotero_get_item_metadata", {"item_key": "ABCD1234"})
+        read = await session.call_tool("zotero_get_item_metadata", {"item_keys": ["ABCD1234"]})
         assert not read.isError
-        assert read.structuredContent["key"] == "ABCD1234"
+        entry = read.structuredContent["items"][0]
+        assert entry["status"] == "ok"
+        assert entry["item"]["key"] == "ABCD1234"
 
         write = await session.call_tool(
             "zotero_update_item",

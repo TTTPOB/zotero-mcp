@@ -9,14 +9,14 @@
 | 视图 | 内容 | 默认工具 |
 | --- | --- | --- |
 | `summary` | `key`、`version`、`item_type`、完整 `title`、`year`、`creator_summary`、`doi`、父条目关系和全文入口；搜索时附加命中关系 | `search_items`、`get_recent`、`get_item_children`、`get_collection_items` |
-| `metadata` | `key`、`version`、`item_type`、`parent_key` 和完整语义 `data`，不带顶层 `library`/`links` | `get_item_metadata`、`get_notes`、`get_annotations` |
+| `metadata` | `key`、`version`、`item_type`、`parent_key` 和完整语义 `data`，不带顶层 `library`/`links` | `get_item_metadata`（每项的 `item`）、`get_notes`、`get_annotations` |
 | `raw` | Zotero 原生记录的深拷贝，不删字段 | 所有支持 `view` 的工具均可显式请求 |
 
 `summary` 不截断标题，不删除条目，也不改变原生顺序。`fulltext.index_state` 固定为 `unknown`，因为附件存在或 MIME 类型不能证明 Zotero 索引已经可读。`fulltext.read_key` 是可直接传给全文工具的 key；附件自身或 `links.enclosure.href` 的明确 `/items/<8位key>` 路径中解析出合法 Zotero key 时提供 `candidate_attachment_key`，但不会据此宣称索引可读。
 
 `metadata.data` 保留摘要、作者、标签、集合及条目类型特有的语义字段。它不是可直接写回的 payload；更新仍使用变化字段补丁和本地 `version`。
 
-MCP 结构化输出模型只序列化业务结果实际设置的字段（`model_fields_set`），因此 `view="raw"` 的单条 `structuredContent` 与原生对象一致，raw 列表的 `structuredContent["items"]` 与原生列表一致，不会因 schema 默认值新增 `null` 字段；summary/metadata 仍只输出投影明确设置的字段。
+MCP 结构化输出模型只序列化业务结果实际设置的字段（`model_fields_set`），因此 `view="raw"` 的每条结果的 `item` 与原生对象一致，raw 列表的 `structuredContent["items"]` 与原生列表一致，不会因 schema 默认值新增 `null` 字段；summary/metadata 仍只输出投影明确设置的字段。
 
 ## 搜索与附件
 

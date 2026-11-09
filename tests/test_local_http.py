@@ -109,14 +109,17 @@ def test_native_batch_partial_failure_is_preserved(wire):
 def test_search_then_metadata_does_not_leak_query(wire):
     library, calls, responses = wire
     responses.extend(
-        [(200, []), (200, {"key": "ABCD1234", "version": 7, "data": {"title": "text"}})]
+        [(200, []), (200, [{"key": "ABCD1234", "version": 7, "data": {"title": "text"}}])]
     )
     library.search_items("中文", tags=["one", "two"], limit=3, offset=6)
-    library.get_item_metadata("ABCD1234")
+    library.get_item_metadata(["ABCD1234"])
     assert calls[0].url.params.get_list("tag") == ["one", "two"]
     assert calls[0].url.params["start"] == "6"
     assert "q" not in calls[1].url.params
     assert "tag" not in calls[1].url.params
+    assert calls[1].url.params["itemKey"] == "ABCD1234"
+    assert calls[1].url.params["limit"] == "100"
+    assert calls[1].url.path.endswith("/items")
 
 
 def test_parent_tag_search_preserves_search_pagination_headers(wire):
@@ -187,8 +190,8 @@ def test_parent_response_without_pagination_headers_keeps_search_total(wire):
 
 def test_read_does_not_send_local_write_key(wire):
     library, calls, responses = wire
-    responses.append((200, {"key": "ABCD1234", "data": {}}))
-    library.get_item_metadata("ABCD1234")
+    responses.append((200, [{"key": "ABCD1234", "data": {}}]))
+    library.get_item_metadata(["ABCD1234"])
     assert "Zotero-API-Key" not in calls[0].headers
     assert calls[0].headers["Zotero-Server-ID"] == "server-1"
 
