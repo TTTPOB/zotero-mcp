@@ -122,6 +122,18 @@ def _validation_details(exc: BaseException) -> Any:
             return None
 
 
+LIMIT_MESSAGE = (
+    "limit must be between 1 and 100. To read more, request pages of at most 100 and pass "
+    "the returned next_offset as offset until next_offset is null."
+)
+
+
+def _is_limit_violation(details: Any) -> bool:
+    return isinstance(details, list) and any(
+        isinstance(entry, dict) and list(entry.get("loc", ())) == ["limit"] for entry in details
+    )
+
+
 def from_exception(
     exc: BaseException,
     *,
@@ -228,6 +240,8 @@ def from_exception(
         return no_index_error(message)
     if isinstance(original, (TypeError, ValueError, KeyError, IndexError)):
         details = _validation_details(original)
+        if _is_limit_violation(details):
+            message = LIMIT_MESSAGE
         return LibraryError(
             INVALID_ARGUMENT,
             message or "The supplied arguments are invalid.",
