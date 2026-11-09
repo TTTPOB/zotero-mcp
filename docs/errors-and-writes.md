@@ -30,7 +30,7 @@
 - `FULLTEXT_ATTACHMENT_AMBIGUOUS`：自动选择有歧义，候选附件在 `details.candidates`。
 - `FULLTEXT_REVISION_MISMATCH`：连续读取的文本 revision 已变化，`details` 保留 expected/actual。
 - `UNAUTHORIZED`：本地授权缺失、撤销或被 Zotero 拒绝。
-- `VERSION_CONFLICT`：本地条目版本或 Zotero server ID 不匹配。
+- `VERSION_CONFLICT`：本地条目版本或 Zotero server ID 不匹配。`update_item`、`delete_item`、`update_collection`、`delete_collection` 因版本过期而冲突时，`error.details.current_version` 是该条目或集合当前的本地版本（读取失败时省略该字段，此时先重读），`message` 说明可在确认自己的修改仍然适用后用该版本重新提交；`details` 还带 `operation` 和 `key`。批量标签/集合修改里，同样的 `error` 在对应的 `failed` 项中。Zotero server ID 不匹配没有 `current_version`。
 - `CONNECTION_ERROR`：读操作或尚未开始写请求时无法连接 Zotero。
 - `UNKNOWN_WRITE_RESULT`：写请求期间连接中断、响应不完整或无法确认结果。
 - `CHILD_ITEM_NOT_ALLOWED`：`manage_collection_items` 加入集合时，批次里有子笔记/附件（带 `parentItem`）。Zotero 不允许子条目属于集合，整批在任何写入之前被拒绝，`details.children` 逐项列出 `key` 和 `parent_key`；改为加入父条目。
@@ -40,7 +40,7 @@
 - `LIBRARY_LOCKED`：Zotero 正在锁定库。
 - `UNSUPPORTED_VERSION`：客户端未使用本地 API，或 Zotero 未提供受支持的 server ID。
 
-`retryable` 只表示客户端是否可以安全地再次尝试。写请求传输中断一律不是可自动重试；先读取库确认状态。`details` 只用于补充字段位置、操作名等结构化信息，客户端不应依赖其中所有字段都存在。
+`retryable` 只表示客户端是否可以安全地再次尝试。写请求传输中断一律不是可自动重试；先读取库确认状态。`VERSION_CONFLICT` 也是 `retryable: false`：原样重发必然再次冲突，用 `current_version` 重新提交会覆盖别人的修改，必须由调用者先确认自己的修改仍然适用，因此不是可以自动重试的情形。`details` 只用于补充字段位置、操作名等结构化信息，客户端不应依赖其中所有字段都存在。
 
 ## 批量写入
 

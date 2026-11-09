@@ -17,7 +17,12 @@ from typing import Annotated, Any, Literal
 from urllib.parse import parse_qs, unquote, urlparse
 
 from pydantic import Field
-from pyzotero import ResourceNotFoundError, Zotero
+from pyzotero import (
+    PreConditionFailedError,
+    ResourceNotFoundError,
+    ServerIDMismatchError,
+    Zotero,
+)
 
 from zotero_mcp.citation_models import CitationItemsResult
 from zotero_mcp.config import Settings, load_auth
@@ -32,6 +37,7 @@ from zotero_mcp.errors import (
     KEY_FORMAT,
     NOT_CITABLE,
     NOT_FOUND,
+    VERSION_CONFLICT,
     LibraryError,
     from_exception,
     key_source,
@@ -392,6 +398,26 @@ def _not_found_error(kind: str, entity_key: str, operation_name: str) -> Library
     )
 
 
+def _version_conflict_error(
+    kind: str, entity_key: str, operation_name: str, current_version: int | None
+) -> LibraryError:
+    details: dict[str, Any] = {"operation": operation_name, "key": entity_key}
+    if current_version is None:
+        message = (
+            f"The {kind} {entity_key} changed. Re-read its current local version before retrying."
+        )
+    else:
+        details["current_version"] = current_version
+        message = (
+            f"The {kind} {entity_key} changed since you read it; its current local version is "
+            f"{current_version}. If your changes still apply to its current state, resubmit "
+            f"with version={current_version}; otherwise re-read it first."
+        )
+    # Not retryable: repeating the same call fails again, and a resubmission needs the
+    # caller to confirm first that the changes still apply (see docs/errors-and-writes.md).
+    return LibraryError(VERSION_CONFLICT, message, retryable=False, details=details)
+
+
 def operation(*, write: bool = False):
     """Serialize one operation and always clear pyzotero's mutable request state."""
 
@@ -451,6 +477,35 @@ class Library:
             if self._zot is not None:
                 self._zot.client.close()
                 self._zot = None
+
+    def _read_version(self, kind: str, entity_key: str) -> int | None:
+        """Current local version of an item or collection, or None when it cannot be read.
+
+        Used after a write already conflicted, so a failed read must not hide the conflict.
+        """
+        try:
+            record = (
+                self.zot.collection(entity_key)
+                if kind == "collection"
+                else self.zot.item(entity_key)
+            )
+            version = record["version"]
+        except Exception:
+            return None
+        return version if type(version) is int and version >= 0 else None
+
+    def _write_failure(
+        self, exc: Exception, kind: str, entity_key: str, operation_name: str
+    ) -> LibraryError:
+        """Map the 404/412 of an item or collection write to NOT_FOUND / VERSION_CONFLICT."""
+        if isinstance(exc, ServerIDMismatchError):
+            # A subclass of PreConditionFailedError, but not an item version conflict.
+            return from_exception(exc, write=True, operation=operation_name)
+        if isinstance(exc, PreConditionFailedError):
+            return _version_conflict_error(
+                kind, entity_key, operation_name, self._read_version(kind, entity_key)
+            )
+        return _not_found_error(kind, entity_key, operation_name)
 
     def _page(
         self,
@@ -1384,7 +1439,8 @@ class Library:
 
         Only supplied fields change. Arrays such as tags, creators and collections
         replace the existing array. A missing item is NOT_FOUND. A concurrent change
-        fails without a retry.
+        is VERSION_CONFLICT with error.details.current_version; resubmit with that
+        version only after confirming your changes still apply to the current item.
         """
         if not changes or {"key", "version", "data", "library"} & changes.keys():
             raise ValueError("Provide changed fields only, without key/version/data/library.")
@@ -1396,10 +1452,16 @@ class Library:
         # Check existence first: PATCH on an unknown key answers 400 (or, when the changes
         # contain itemType, creates a new item under that key) instead of 404.
         try:
-            self.zot.item(payload["key"])
+            current = self.zot.item(payload["key"])
         except ResourceNotFoundError as exc:
             raise _not_found_error("item", payload["key"], "update_item") from exc
-        if self.zot.update_item(payload) is not True:
+        if current["version"] != payload["version"]:
+            raise _version_conflict_error("item", payload["key"], "update_item", current["version"])
+        try:
+            confirmed = self.zot.update_item(payload)
+        except (PreConditionFailedError, ResourceNotFoundError) as exc:
+            raise self._write_failure(exc, "item", payload["key"], "update_item") from exc
+        if confirmed is not True:
             raise LibraryError(
                 "UNKNOWN_WRITE_RESULT",
                 "Zotero did not confirm the update; inspect the item before retrying.",
@@ -1415,13 +1477,15 @@ class Library:
     def delete_item(self, item_key: ItemKey, version: Version) -> WriteResponse:
         """Permanently delete an item (including child items), note or annotation.
 
-        This does not move it to Trash. Supply its last-read local version.
+        This does not move it to Trash. Supply its last-read local version. A missing
+        item is NOT_FOUND; a concurrent change is VERSION_CONFLICT with
+        error.details.current_version.
         """
         payload = {"key": key(item_key), "version": version_number(version)}
         try:
             confirmed = self.zot.delete_item(payload)
-        except ResourceNotFoundError as exc:
-            raise _not_found_error("item", payload["key"], "delete_item") from exc
+        except (PreConditionFailedError, ResourceNotFoundError) as exc:
+            raise self._write_failure(exc, "item", payload["key"], "delete_item") from exc
         if confirmed is not True:
             raise RuntimeError(
                 "Zotero did not confirm deletion; check the library before retrying."
@@ -1501,7 +1565,8 @@ class Library:
     ) -> WriteResponse:
         """Rename/move a collection. Use parent_collection='' to move it to the root.
 
-        A missing collection is NOT_FOUND.
+        A missing collection is NOT_FOUND. A concurrent change is VERSION_CONFLICT with
+        error.details.current_version.
         """
         if name is None and parent_collection is None:
             raise ValueError("Provide a name or parent_collection to change.")
@@ -1515,9 +1580,8 @@ class Library:
         except ResourceNotFoundError as exc:
             raise _not_found_error("collection", collection_key, "update_collection") from exc
         if current["version"] != version:
-            raise LibraryError(
-                "VERSION_CONFLICT",
-                "The collection changed. Re-read its current local version before retrying.",
+            raise _version_conflict_error(
+                "collection", collection_key, "update_collection", current["version"]
             )
         payload = {
             "key": collection_key,
@@ -1529,7 +1593,13 @@ class Library:
             payload["name"] = name
         if parent_collection is not None:
             payload["parentCollection"] = key(parent_collection) if parent_collection else False
-        if self.zot.update_collection(payload) is not True:
+        try:
+            confirmed = self.zot.update_collection(payload)
+        except (PreConditionFailedError, ResourceNotFoundError) as exc:
+            raise self._write_failure(
+                exc, "collection", collection_key, "update_collection"
+            ) from exc
+        if confirmed is not True:
             raise RuntimeError("Zotero did not confirm the collection update.")
         return {
             "ok": True,
@@ -1540,12 +1610,18 @@ class Library:
 
     @operation(write=True)
     def delete_collection(self, collection_key: ItemKey, version: Version) -> WriteResponse:
-        """Permanently delete a collection. Library items remain; child collections are also removed."""
+        """Permanently delete a collection. Library items remain; child collections are also removed.
+
+        A missing collection is NOT_FOUND; a concurrent change is VERSION_CONFLICT with
+        error.details.current_version.
+        """
         payload = {"key": key(collection_key), "version": version_number(version)}
         try:
             confirmed = self.zot.delete_collection(payload)
-        except ResourceNotFoundError as exc:
-            raise _not_found_error("collection", payload["key"], "delete_collection") from exc
+        except (PreConditionFailedError, ResourceNotFoundError) as exc:
+            raise self._write_failure(
+                exc, "collection", payload["key"], "delete_collection"
+            ) from exc
         if confirmed is not True:
             raise RuntimeError("Zotero did not confirm collection deletion.")
         return {

@@ -58,7 +58,7 @@
 | `attach_file` | 将绝对路径的本地文件复制到 Zotero 附件存储 |
 | `attach_markdown` | 幂等创建固定名称 `paper-chew-fulltext.md` Markdown 附件 |
 
-修改或删除条目前，先读取其 `version`。key 不存在时 `update_item`、`delete_item`、`update_collection`、`delete_collection` 返回 `NOT_FOUND`，重新搜索取得 key。集合改名/移动也需要本地版本。发生版本冲突时，重新读取后决定如何修改；程序不会用旧数据重试覆盖。
+修改或删除条目前，先读取其 `version`。key 不存在时 `update_item`、`delete_item`、`update_collection`、`delete_collection` 返回 `NOT_FOUND`，重新搜索取得 key。集合改名/移动也需要本地版本。发生版本冲突时，`error.details.current_version` 给出当前本地版本；确认自己的修改仍然适用后，可以用它重新提交，否则重新读取后决定如何修改。程序不会用旧数据重试覆盖。
 
 `update_item` 只更改你传入的字段，但数组字段会整体替换。因此，增删标签优先使用 `batch_update_tags`，调整集合归属优先使用 `manage_collection_items`。
 

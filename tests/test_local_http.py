@@ -81,11 +81,14 @@ def test_stale_patch_is_not_retried(wire):
             (200, {"key": "ABCD1234", "version": 7, "data": {}}),
             (200, [{"field": "title"}]),
             (412, "Item has changed since specified version"),
+            (200, {"key": "ABCD1234", "version": 9, "data": {}}),
         ]
     )
-    with pytest.raises(ValueError, match="current local version"):
+    with pytest.raises(ValueError, match="current local version") as caught:
         library.update_item("ABCD1234", 7, {"title": "new"})
-    assert [c.method for c in calls] == ["GET", "GET", "PATCH"]
+    assert caught.value.details["current_version"] == 9
+    # The PATCH is sent once; the last GET only reads the version for the error.
+    assert [c.method for c in calls] == ["GET", "GET", "PATCH", "GET"]
 
 
 def test_delete_is_conditional_native_api(wire):

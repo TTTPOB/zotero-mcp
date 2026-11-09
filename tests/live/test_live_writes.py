@@ -285,3 +285,56 @@ def test_add_items_rejects_unknown_fields_before_writing(mcp):
     assert "bogus" in result["error"]["message"]
     found = mcp("search_items", {"query": "Live unknown field"})
     assert found["items"] == []
+
+
+def test_version_conflict_reports_current_version_and_can_be_resubmitted(mcp, new_item):
+    key, version = new_item()
+    mcp("update_item", {"item_key": key, "version": version, "changes": {"title": "first"}})
+    current = version_of(mcp, key)
+
+    result = mcp(
+        "update_item",
+        {"item_key": key, "version": version, "changes": {"title": "second"}},
+        error=True,
+    )
+    assert result["error"]["code"] == "VERSION_CONFLICT"
+    assert result["error"]["details"]["current_version"] == current
+
+    mcp(
+        "update_item",
+        {
+            "item_key": key,
+            "version": result["error"]["details"]["current_version"],
+            "changes": {"title": "second"},
+        },
+    )
+    assert read_item(mcp, key)["data"]["title"] == "second"
+
+    deleted = mcp("delete_item", {"item_key": key, "version": version}, error=True)
+    assert deleted["error"]["code"] == "VERSION_CONFLICT"
+    assert deleted["error"]["details"]["current_version"] == version_of(mcp, key)
+
+
+def test_collection_version_conflict_reports_current_version(mcp):
+    key = mcp("create_collection", {"name": "Live conflict"})["results"][0]["key"]
+
+    def current():
+        return {c["key"]: c for c in mcp("get_collections", {"limit": 100})["items"]}[key][
+            "version"
+        ]
+
+    stale = current()
+    mcp("update_collection", {"collection_key": key, "version": stale, "name": "Live conflict 2"})
+    latest = current()
+
+    result = mcp(
+        "update_collection",
+        {"collection_key": key, "version": stale, "name": "Live conflict 3"},
+        error=True,
+    )
+    assert result["error"]["code"] == "VERSION_CONFLICT"
+    assert result["error"]["details"]["current_version"] == latest
+
+    deleted = mcp("delete_collection", {"collection_key": key, "version": stale}, error=True)
+    assert deleted["error"]["code"] == "VERSION_CONFLICT"
+    assert deleted["error"]["details"]["current_version"] == latest
