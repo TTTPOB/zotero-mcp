@@ -43,7 +43,6 @@ from zotero_mcp.errors import (
     from_exception,
 )
 from zotero_mcp.fulltext import (
-    FulltextError,
     make_chunk,
     make_find_result,
     parse_fulltext_response,
@@ -69,7 +68,7 @@ from zotero_mcp.fulltext_models import (
     FulltextRevision,
 )
 from zotero_mcp.identifiers import Identifier, matching_field, parse_identifier
-from zotero_mcp.models import ItemDataList, ItemKey, ItemKeyList, Version, WriteResponse
+from zotero_mcp.models import ItemDataList, ItemKey, ItemKeyList, Version, WriteResult
 from zotero_mcp.presentation import (
     ItemMetadataBatch,
     ItemPage,
@@ -1309,7 +1308,7 @@ class Library:
     def _check_text_revision(content: str, expected: str | None, *, attachment_key: str) -> str:
         actual = text_revision(content)
         if expected is not None and expected != actual:
-            raise FulltextError(
+            raise LibraryError(
                 "FULLTEXT_REVISION_MISMATCH",
                 "The attachment text changed; restart reading from offset 0 with the new revision.",
                 details={
@@ -1608,7 +1607,7 @@ class Library:
         )
 
     @operation(write=True)
-    def add_items(self, items: ItemDataList) -> WriteResponse:
+    def add_items(self, items: ItemDataList) -> WriteResult:
         """Create 1 to 50 items, notes or annotations from Zotero item-data objects.
 
         Use zotero_get_item_schema to check fields. Child notes/annotations need
@@ -1643,7 +1642,7 @@ class Library:
                 description="Changed Zotero fields only; arrays replace whole arrays, so preserve entries you want to keep."
             ),
         ],
-    ) -> WriteResponse:
+    ) -> WriteResult:
         """Patch item metadata, a note or annotation using its last-read local version.
 
         Only supplied fields change. Arrays such as tags, creators and collections
@@ -1696,7 +1695,7 @@ class Library:
             return None
 
     @operation(write=True)
-    def delete_item(self, item_key: ItemKey, version: Version) -> WriteResponse:
+    def delete_item(self, item_key: ItemKey, version: Version) -> WriteResult:
         """Permanently delete an item (including child items), note or annotation.
 
         This does not move it to Trash. Supply its last-read local version. A missing
@@ -1731,7 +1730,7 @@ class Library:
         tags: Annotated[
             list[str] | None, Field(description="Tag names to assign to the new note.")
         ] = None,
-    ) -> WriteResponse:
+    ) -> WriteResult:
         """Create a child note. Escape plain text by default; as_html preserves Zotero HTML."""
         content = text if as_html else "<p>" + html.escape(text).replace("\n", "<br/>") + "</p>"
         if title:
@@ -1761,7 +1760,7 @@ class Library:
                 description="Parent collection key; omit or use an empty string to create at the root."
             ),
         ] = None,
-    ) -> WriteResponse:
+    ) -> WriteResult:
         """Create a collection, optionally under a parent collection."""
         if not name.strip():
             raise ValueError("A collection name cannot be empty.")
@@ -1783,7 +1782,7 @@ class Library:
                 description="New parent collection key; empty string moves to root, null leaves the parent unchanged."
             ),
         ] = None,
-    ) -> WriteResponse:
+    ) -> WriteResult:
         """Rename/move a collection. Use parent_collection='' to move it to the root.
 
         A missing collection is NOT_FOUND. A concurrent change is VERSION_CONFLICT with
@@ -1827,7 +1826,7 @@ class Library:
         )
 
     @operation(write=True)
-    def delete_collection(self, collection_key: ItemKey, version: Version) -> WriteResponse:
+    def delete_collection(self, collection_key: ItemKey, version: Version) -> WriteResult:
         """Permanently delete a collection. Library items remain; child collections are also removed.
 
         A missing collection is NOT_FOUND; a concurrent change is VERSION_CONFLICT with
@@ -1940,7 +1939,7 @@ class Library:
         remove: Annotated[
             list[str] | None, Field(description="Tag names to remove, preserving all other tags.")
         ] = None,
-    ) -> WriteResponse:
+    ) -> WriteResult:
         """Add/remove tags while preserving other tags and tag types.
 
         Read each item's current local version before writing. On the first error,
@@ -1994,7 +1993,7 @@ class Library:
                 description="Add or remove collection membership; removing does not delete items."
             ),
         ],
-    ) -> WriteResponse:
+    ) -> WriteResult:
         """Add/remove up to 50 items from a collection, preserving other memberships.
 
         Stop at the first failure and report completed and pending keys.
@@ -2025,7 +2024,7 @@ class Library:
         title: str | None = None,
         *,
         content_type_override: str | None = None,
-    ) -> WriteResponse:
+    ) -> WriteResult:
         """Copy an existing absolute-path file into Zotero's local attachment storage.
 
         No URL download. If upload fails after creation, returns the attachment key
@@ -2133,7 +2132,7 @@ class Library:
             str | None,
             Field(description="Attachment title; omit or use an empty string to use the filename."),
         ] = None,
-    ) -> WriteResponse:
+    ) -> WriteResult:
         """Copy a local file into Zotero attachment storage.
 
         No version is returned after upload; read the attachment before editing it.
@@ -2141,7 +2140,7 @@ class Library:
         return self._attach_file(parent_key, file_path, title)
 
     @operation(write=True)
-    def attach_markdown(self, parent_key: ItemKey, content: AttachmentTextContent) -> WriteResponse:
+    def attach_markdown(self, parent_key: ItemKey, content: AttachmentTextContent) -> WriteResult:
         """Create or reuse the fixed Markdown attachment for one paper.
 
         Uploads return no version; read the attachment before editing it. Reused

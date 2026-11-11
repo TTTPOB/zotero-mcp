@@ -3,17 +3,15 @@ from mcp.shared.memory import create_connected_server_and_client_session
 from pyzotero import PreConditionFailedError, ResourceNotFoundError
 
 from zotero_mcp.client import Library, write_result
-from zotero_mcp.server import build_server
 from zotero_mcp.errors import (
     CONNECTION_ERROR,
     INVALID_ARGUMENT,
-    NO_INDEX,
     NOT_FOUND,
     UNKNOWN_WRITE_RESULT,
     VERSION_CONFLICT,
     LibraryError,
-    from_exception,
 )
+from zotero_mcp.server import build_server
 
 
 def test_library_error_has_stable_payload():
@@ -144,14 +142,6 @@ def test_batch_result_keeps_updated_failed_and_pending_entries(library, zot):
     ]
     assert result["results"][1]["error"]["code"] == VERSION_CONFLICT
     assert result["results"][2] == {"input_index": 2, "key": "THIRD003", "status": "pending"}
-
-
-def test_no_index_message_is_not_duplicated():
-    error = from_exception(
-        ValueError("No indexed attachment text is available. Index the attachment in Zotero first.")
-    )
-    assert error.code == NO_INDEX
-    assert error.message.count("Index the attachment") == 1
 
 
 def test_write_result_rejects_empty_response_with_machine_code():

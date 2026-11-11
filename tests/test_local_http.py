@@ -7,6 +7,7 @@ import pytest
 from pyzotero import Zotero
 
 from zotero_mcp.client import Library
+from zotero_mcp.errors import LibraryError
 
 
 @pytest.fixture
@@ -88,8 +89,9 @@ def test_stale_patch_is_not_retried(wire):
             (200, {"key": "ABCD1234", "version": 9, "data": {}}),
         ]
     )
-    with pytest.raises(ValueError, match="current local version") as caught:
+    with pytest.raises(LibraryError, match="current local version") as caught:
         library.update_item("ABCD1234", 7, {"title": "new"})
+    assert caught.value.code == "VERSION_CONFLICT"
     assert caught.value.details["current_version"] == 9
     # The PATCH is sent once; the last GET only reads the version for the error.
     assert [c.method for c in calls] == ["GET", "GET", "PATCH", "GET"]

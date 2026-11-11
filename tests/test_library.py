@@ -9,7 +9,8 @@ from pyzotero import (
     ServerIDMismatchError,
 )
 
-from zotero_mcp.client import FulltextError, Library, write_result
+from zotero_mcp.client import Library, write_result
+from zotero_mcp.errors import LibraryError
 
 
 def test_search_passes_filters_and_pagination(library, zot):
@@ -25,16 +26,18 @@ def test_search_passes_filters_and_pagination(library, zot):
 
 
 def test_blank_search_fails(library, zot):
-    with pytest.raises(ValueError):
+    with pytest.raises(LibraryError) as caught:
         library.search_items(" ")
+    assert caught.value.code == "QUERY_OR_TAGS_REQUIRED"
     zot.items.assert_not_called()
 
 
 def test_read_without_write_permission(library, zot):
     zot.local_api_key = None
     assert library.get_item_metadata(["abcd1234"])["items"][0]["item"]["key"] == "ABCD1234"
-    with pytest.raises(ValueError, match="authorize"):
+    with pytest.raises(LibraryError, match="authorize") as caught:
         library.create_note("ABCD1234", "note")
+    assert caught.value.code == "UNAUTHORIZED"
     zot.create_items.assert_not_called()
     zot.authorize_local.assert_not_called()
 
@@ -42,24 +45,26 @@ def test_read_without_write_permission(library, zot):
 def test_cloud_factory_rejected():
     zot = Mock(local=False)
     library = Library(lambda: zot)
-    with pytest.raises(ValueError, match="local API"):
+    with pytest.raises(LibraryError, match="local API") as caught:
         library.get_item_metadata(["ABCD1234"])
+    assert caught.value.code == "UNSUPPORTED_VERSION"
     zot.items.assert_not_called()
     zot.client.close.assert_called_once()
 
 
 @pytest.mark.parametrize(
-    "error,message",
+    "error,message,code",
     [
-        (LocalAPIKeyRequiredError("expired"), "authorize"),
-        (ServerIDMismatchError("changed"), "profile"),
-        (PreConditionFailedError("stale"), "current local version"),
+        (LocalAPIKeyRequiredError("expired"), "authorize", "UNAUTHORIZED"),
+        (ServerIDMismatchError("changed"), "profile", "VERSION_CONFLICT"),
+        (PreConditionFailedError("stale"), "current local version", "VERSION_CONFLICT"),
     ],
 )
-def test_write_errors_do_not_retry(library, zot, error, message):
+def test_write_errors_do_not_retry(library, zot, error, message, code):
     zot.update_item.side_effect = error
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(LibraryError, match=message) as caught:
         library.update_item("ABCD1234", 7, {"title": "new"})
+    assert caught.value.code == code
     zot.update_item.assert_called_once()
     zot.authorize_local.assert_not_called()
 
@@ -74,8 +79,9 @@ def test_update_is_partial_and_uses_supplied_version(library, zot):
 
 @pytest.mark.parametrize("changes", [{}, {"key": "OTHER123"}, {"version": 9}, {"data": {}}])
 def test_invalid_patch(library, zot, changes):
-    with pytest.raises(ValueError):
+    with pytest.raises(LibraryError) as caught:
         library.update_item("ABCD1234", 7, changes)
+    assert caught.value.code == "INVALID_ARGUMENT"
     zot.update_item.assert_not_called()
 
 
@@ -86,8 +92,9 @@ def test_delete_uses_local_version(library, zot):
 
 @pytest.mark.parametrize("items", [[{}], [{"itemType": "book", "key": "ABCD1234"}]])
 def test_invalid_create_never_writes(library, zot, items):
-    with pytest.raises(ValueError):
+    with pytest.raises(LibraryError) as caught:
         library.add_items(items)
+    assert caught.value.code == "INVALID_ARGUMENT"
     zot.create_items.assert_not_called()
 
 
@@ -104,8 +111,9 @@ def test_partial_create_reports_both_outcomes(library, zot):
 
 
 def test_unrecognized_write_response_is_not_success():
-    with pytest.raises(RuntimeError):
+    with pytest.raises(LibraryError) as caught:
         write_result({"error": "unknown"})
+    assert caught.value.code == "UNKNOWN_WRITE_RESULT"
 
 
 def test_note_is_child_and_escapes_plain_text(library, zot):
@@ -196,7 +204,7 @@ def test_multiple_attachments_are_not_probed_or_silently_replaced(library, zot):
     zot.children.return_value = [
         {"key": k, "data": {"itemType": "attachment"}} for k in ("ATTACH01", "ATTACH02")
     ]
-    with pytest.raises(FulltextError) as caught:
+    with pytest.raises(LibraryError) as caught:
         library.get_item_fulltext("ABCD1234")
     assert caught.value.code == "FULLTEXT_ATTACHMENT_AMBIGUOUS"
     assert [candidate["attachment_key"] for candidate in caught.value.details["candidates"]] == [
@@ -208,7 +216,7 @@ def test_multiple_attachments_are_not_probed_or_silently_replaced(library, zot):
 
 def test_no_text_is_actionable(library, zot):
     zot.fulltext_item.side_effect = ResourceNotFoundError("parent has no index")
-    with pytest.raises(FulltextError) as caught:
+    with pytest.raises(LibraryError) as caught:
         library.get_item_fulltext("ABCD1234")
     assert caught.value.code == "FULLTEXT_ATTACHMENT_NOT_FOUND"
 
@@ -219,8 +227,9 @@ def test_failed_query_state_cleared(library, zot):
         raise RuntimeError("failure")
 
     zot.items.side_effect = fail
-    with pytest.raises(RuntimeError):
+    with pytest.raises(LibraryError) as caught:
         library.search_items("q")
+    assert caught.value.code == "UNKNOWN_ERROR"
     assert zot.url_params is None
     assert zot.links is None
     assert zot.tag_data is False
@@ -239,6 +248,7 @@ def test_attachment_upload_failure_keeps_created_key(library, zot, tmp_path):
 
 
 def test_attachment_invalid_path_never_creates(library, zot):
-    with pytest.raises(ValueError):
+    with pytest.raises(LibraryError) as caught:
         library.attach_file("ABCD1234", "relative.pdf")
+    assert caught.value.code == "INVALID_ARGUMENT"
     zot.create_items.assert_not_called()

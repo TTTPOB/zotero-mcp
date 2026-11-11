@@ -8,6 +8,7 @@ import pytest
 from zotero_mcp.errors import (
     ATTACHMENT_CONTENT_CONFLICT,
     INVALID_ARGUMENT,
+    LibraryError,
 )
 
 
@@ -67,7 +68,7 @@ def test_read_attachment_text_rejects_invalid_utf8_legacy_markdown(library, zot)
     zot.item.return_value = attachment(content_type="application/octet-stream")
     zot.file.return_value = b"# invalid \xff\n"
 
-    with pytest.raises(ValueError) as caught:
+    with pytest.raises(LibraryError) as caught:
         library.read_attachment_text("ATTACH01")
 
     assert caught.value.code == INVALID_ARGUMENT
@@ -77,7 +78,7 @@ def test_read_attachment_text_rejects_pdf_before_file_read(library, zot):
     zot.item.side_effect = None
     zot.item.return_value = attachment(filename="paper.pdf", content_type="application/pdf")
 
-    with pytest.raises(ValueError) as caught:
+    with pytest.raises(LibraryError) as caught:
         library.read_attachment_text("ATTACH01")
 
     assert caught.value.code == INVALID_ARGUMENT
@@ -89,7 +90,7 @@ def test_read_attachment_text_rejects_binary_signature_with_legacy_markdown_meta
     zot.item.return_value = attachment(content_type="application/octet-stream")
     zot.file.return_value = b"%PDF-1.7\n"
 
-    with pytest.raises(ValueError) as caught:
+    with pytest.raises(LibraryError) as caught:
         library.read_attachment_text("ATTACH01")
 
     assert caught.value.code == INVALID_ARGUMENT
@@ -139,7 +140,7 @@ def test_read_attachment_text_rejects_remote_file_redirect(library, zot, tmp_pat
         headers={"Location": "file://remote-host" + target.as_posix()},
     )
 
-    with pytest.raises(ValueError) as caught:
+    with pytest.raises(LibraryError) as caught:
         library.read_attachment_text("ATTACH01")
 
     assert caught.value.code == INVALID_ARGUMENT

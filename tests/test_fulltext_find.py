@@ -5,7 +5,7 @@ from unittest.mock import call
 import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
 
-from zotero_mcp.client import FulltextError
+from zotero_mcp.errors import LibraryError
 from zotero_mcp.fulltext import text_revision
 from zotero_mcp.server import build_server
 
@@ -101,7 +101,7 @@ def test_find_checks_text_revision(library, zot):
     zot.fulltext_item.side_effect = [{"content": "old text"}, {"content": "new text"}]
     first = library.find_item_fulltext("ATTACH01", "text")
 
-    with pytest.raises(FulltextError) as caught:
+    with pytest.raises(LibraryError) as caught:
         library.find_item_fulltext("ATTACH01", "text", text_revision=first["text_revision"])
 
     assert caught.value.code == "FULLTEXT_REVISION_MISMATCH"
