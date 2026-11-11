@@ -283,7 +283,7 @@ def test_attachment_upload_uses_local_receiver_and_registration(wire, monkeypatc
     result = library.attach_file("ABCD1234", str(path))
     assert result["ok"] is True
     assert result["key"] == "ATTACH01"
-    assert "upload" not in result
+    assert result["version"] == result["results"][0]["version"] == 8
     assert len(uploads) == 1
     assert calls[-1].url.path == "/api/users/0/items/ATTACH01/file"
     assert b"upload=registration-test" in calls[-1].content

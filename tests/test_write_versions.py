@@ -7,7 +7,18 @@ from datetime import timedelta
 from mcp.shared.memory import create_connected_server_and_client_session
 from write_support import item_versions
 
+from zotero_mcp.client import write_result
 from zotero_mcp.server import build_server
+
+
+def test_create_results_use_the_native_entity_version(library, zot):
+    native = {"successful": {"0": {"key": "NEW00001", "version": 19, "data": {"title": "new"}}}, "success": {"0": "NEW00001"}, "failed": {}}
+    zot.create_items.return_value = native
+    assert library.add_items([{"itemType": "book"}])["results"] == [{"input_index": 0, "key": "NEW00001", "status": "success", "version": 19}]
+    note = library.create_note("ABCD1234", "note")
+    assert note["version"] == note["results"][0]["version"] == 19
+    zot.item.assert_not_called()
+    assert "version" not in write_result({"success": {"0": "NEW00001"}})["results"][0]
 
 
 def test_update_item_returns_the_item_version_read_back_after_the_write(library, zot, item):

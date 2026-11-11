@@ -28,7 +28,10 @@ def test_add_items_creates_readable_items(mcp):
     assert result["ok"] and result["status"] == "success"
     assert [entry["input_index"] for entry in result["results"]] == [0, 1]
     first, second = (entry["key"] for entry in result["results"])
-    assert read_item(mcp, first)["data"]["title"] == "Live added one"
+    # Use the create result directly, without reading the new item first.
+    changed = mcp("update_item", {"item_key": first, "version": result["results"][0]["version"], "changes": {"title": "Live added one updated"}})
+    assert changed["ok"]
+    assert read_item(mcp, first)["data"]["title"] == "Live added one updated"
     assert read_item(mcp, second)["item_type"] == "book"
     assert tag_names(mcp, second) == {"live-added"}
 
@@ -88,6 +91,8 @@ def test_create_note_is_a_child_note_with_tags(mcp, new_item):
     )
     note_key = result["results"][0]["key"]
     note = read_item(mcp, note_key)
+    assert result["key"] == note_key
+    assert result["version"] == result["results"][0]["version"] == note["version"]
     assert note["parent_key"] == parent
     html = note["data"]["note"]
     assert "<h1>Heading</h1>" in html and "&lt;two&gt;" in html
@@ -96,7 +101,8 @@ def test_create_note_is_a_child_note_with_tags(mcp, new_item):
 
 
 def test_collection_lifecycle(mcp):
-    root = mcp("create_collection", {"name": "Live lifecycle root"})["results"][0]["key"]
+    created = mcp("create_collection", {"name": "Live lifecycle root"})
+    root = created["key"]
     other = mcp("create_collection", {"name": "Live lifecycle other"})["results"][0]["key"]
     sub = mcp("create_collection", {"name": "Live sub", "parent_collection": root})["results"][0][
         "key"
@@ -105,6 +111,7 @@ def test_collection_lifecycle(mcp):
     def collection(key):
         return {c["key"]: c for c in mcp("get_collections", {"limit": 100})["items"]}[key]
 
+    assert created["version"] == created["results"][0]["version"] == collection(root)["version"]
     assert collection(sub)["data"]["parentCollection"] == root
 
     mcp(
@@ -178,6 +185,7 @@ def test_attach_file_stores_a_readable_copy(mcp, new_item, tmp_path):
     assert result["ok"] and result["results"][0]["stage"] == "upload"
     attachment = result["key"]
     metadata = read_item(mcp, attachment)
+    assert result["version"] == result["results"][0]["version"] == metadata["version"]
     assert metadata["parent_key"] == parent
     assert metadata["data"]["title"] == "Mine"
     assert metadata["data"]["linkMode"] == "imported_file"
@@ -191,6 +199,7 @@ def test_attach_markdown_creates_once_and_never_duplicates(mcp, new_item):
     created = mcp("attach_markdown", {"parent_key": parent, "content": body})
     assert created["ok"]
     attachment = created["key"]
+    assert created["version"] == created["results"][0]["version"] == version_of(mcp, attachment)
     assert mcp("read_attachment_text", {"attachment_key": attachment})["content"] == body
 
     same = mcp("attach_markdown", {"parent_key": parent, "content": body})

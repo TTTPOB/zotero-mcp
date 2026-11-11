@@ -272,6 +272,12 @@ def _response_key(value: Any) -> str | None:
     return None
 
 
+def _response_version(value: Any) -> int | None:
+    """Take an entity version from a native saved object, never a library header."""
+    candidate = value.get("version") if isinstance(value, dict) else None
+    return candidate if type(candidate) is int and candidate >= 0 else None
+
+
 def _result_status(entries: list[dict[str, Any]]) -> str:
     statuses = {entry["status"] for entry in entries}
     if not statuses or statuses <= {"success", "unchanged"}:
@@ -374,6 +380,8 @@ def write_result(
         }
         if status in {"failed", "unknown"}:
             entry["error"] = value
+        elif (version := _response_version(value)) is not None:
+            entry["version"] = version
         entries.append(entry)
 
     normalized = {
@@ -2053,7 +2061,9 @@ class Library:
             return _single_write_result(attachment_key, status="unknown", stage="upload", error=payload)
 
         status = "success" if success else "unchanged"
-        return _single_write_result(attachment_key, status=status, stage="upload")
+        uploaded = (success or unchanged)[0]
+        version = _response_version(uploaded) if _response_key(uploaded) == attachment_key else None
+        return _single_write_result(attachment_key, version, status=status, stage="upload")
 
     @operation(write=True)
     def attach_file(
@@ -2142,7 +2152,7 @@ class Library:
                 return _single_write_result(existing_key, status="unknown", error=error)
             existing_digest = hashlib.sha256(existing_raw).hexdigest()
             if existing_digest == digest:
-                return _single_write_result(existing_key, status="unchanged")
+                return _single_write_result(existing_key, _response_version(existing), status="unchanged")
             error = {
                 "code": ATTACHMENT_CONTENT_CONFLICT,
                 "message": "A different fixed Markdown attachment already exists; no duplicate was created.",

@@ -207,7 +207,7 @@ def new_item(mcp):
             "add_items", {"items": [{"itemType": "journalArticle", "title": title, **fields}]}
         )
         key = result["results"][0]["key"]
-        version = result["successful"]["0"]["version"]
+        version = result["results"][0]["version"]
         return key, version
 
     return create
