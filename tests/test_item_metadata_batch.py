@@ -69,13 +69,6 @@ def test_items_beyond_the_first_page_are_found(library, zot):
     assert entries[0]["status"] == "ok"
 
 
-@pytest.mark.parametrize("keys", [[], ["ABCD1234"] * 51])
-def test_key_count_is_limited_to_1_to_50(library, zot, keys):
-    with pytest.raises(ValueError):
-        library.get_item_metadata(keys)
-    zot.items.assert_not_called()
-
-
 def test_fifty_keys_are_accepted(library, zot):
     keys = [f"KEY{i:05d}" for i in range(50)]
     zot.items.return_value = [_item(k) for k in keys]

@@ -138,14 +138,7 @@ class TagPage(_FieldsSetModel):
     total: int | None = None
 
 
-_VALID_VIEWS = {"summary", "metadata", "raw"}
 _YEAR_RE = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
-
-
-def normalize_view(view: str) -> ReadView:
-    if not isinstance(view, str) or view not in _VALID_VIEWS:
-        raise ValueError("view must be one of: summary, metadata, raw.")
-    return view  # type: ignore[return-value]
 
 
 def _data(item: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -246,7 +239,6 @@ def _metadata(item: Mapping[str, Any]) -> dict[str, Any]:
 
 def project_item(item: Mapping[str, Any], view: ReadView = "summary") -> dict[str, Any]:
     """Project one native Zotero item without mutating the source object."""
-    view = normalize_view(view)
     if view == "raw":
         return copy.deepcopy(dict(item))
     if view == "metadata":

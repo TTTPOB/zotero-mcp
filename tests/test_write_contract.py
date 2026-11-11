@@ -1,7 +1,9 @@
 import pytest
+from mcp.shared.memory import create_connected_server_and_client_session
 from pyzotero import PreConditionFailedError, ResourceNotFoundError
 
 from zotero_mcp.client import Library, write_result
+from zotero_mcp.server import build_server
 from zotero_mcp.errors import (
     CONNECTION_ERROR,
     INVALID_ARGUMENT,
@@ -158,8 +160,11 @@ def test_write_result_rejects_empty_response_with_machine_code():
     assert raised.value.code == UNKNOWN_WRITE_RESULT
 
 
-def test_invalid_write_arguments_have_machine_code(library, zot):
-    with pytest.raises(LibraryError) as raised:
-        library.update_item("bad", 7, {"title": "new"})
-    assert raised.value.code == INVALID_ARGUMENT
+async def test_invalid_write_arguments_have_machine_code(library, zot):
+    async with create_connected_server_and_client_session(build_server(library)) as session:
+        result = await session.call_tool(
+            "zotero_update_item", {"item_key": "bad", "version": 7, "changes": {"title": "new"}}
+        )
+    assert result.isError
+    assert result.structuredContent["error"]["code"] == INVALID_ARGUMENT
     zot.update_item.assert_not_called()

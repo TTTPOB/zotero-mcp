@@ -9,7 +9,7 @@ from pyzotero import (
     ServerIDMismatchError,
 )
 
-from zotero_mcp.client import FulltextError, Library, key, pagination, write_result
+from zotero_mcp.client import FulltextError, Library, write_result
 
 
 def test_search_passes_filters_and_pagination(library, zot):
@@ -22,18 +22,6 @@ def test_search_passes_filters_and_pagination(library, zot):
         start=2,
     )
     assert result["next_offset"] == 3
-
-
-@pytest.mark.parametrize("limit,offset", [(0, 0), (101, 0), (True, 0), (1, -1), (1, "0")])
-def test_bad_pagination(limit, offset):
-    with pytest.raises(ValueError):
-        pagination(limit, offset)
-
-
-@pytest.mark.parametrize("value", ["../items", "ABCD1234?q=x", "short", "汉字123456"])
-def test_invalid_key(value):
-    with pytest.raises(ValueError):
-        key(value)
 
 
 def test_blank_search_fails(library, zot):
@@ -96,16 +84,7 @@ def test_delete_uses_local_version(library, zot):
     zot.delete_item.assert_called_once_with({"key": "ABCD1234", "version": 7})
 
 
-@pytest.mark.parametrize("version", [-1, True, "7"])
-def test_bad_version_never_writes(library, zot, version):
-    with pytest.raises(ValueError):
-        library.delete_item("ABCD1234", version)
-    zot.delete_item.assert_not_called()
-
-
-@pytest.mark.parametrize(
-    "items", [[], [{}], [{"itemType": "book", "key": "ABCD1234"}], [{"itemType": "book"}] * 51]
-)
+@pytest.mark.parametrize("items", [[{}], [{"itemType": "book", "key": "ABCD1234"}]])
 def test_invalid_create_never_writes(library, zot, items):
     with pytest.raises(ValueError):
         library.add_items(items)
