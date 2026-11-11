@@ -1254,9 +1254,7 @@ class Library:
             preferred_attachment_key=preferred_attachment_key(item),
         )
 
-    def _read_indexed_attachment(
-        self, key_: str
-    ) -> tuple[str, str, dict[str, Any]]:
+    def _read_indexed_attachment(self, key_: str) -> tuple[str, str, dict[str, Any]]:
         """Read indexed text; return (attachment_key, content, index response).
 
         A parent item key is accepted and mapped to one of its

@@ -26,7 +26,10 @@ def test_unique_pdf_is_preferred_over_other_attachment(library, zot):
         attachment("SUPP0001", content_type="text/plain", title="Supplement"),
         attachment("PAPER001", title="Main paper"),
     ]
-    zot.fulltext_item.side_effect = [ResourceNotFoundError("parent has no index"), {"content": "paper text"}]
+    zot.fulltext_item.side_effect = [
+        ResourceNotFoundError("parent has no index"),
+        {"content": "paper text"},
+    ]
 
     result = library.get_item_fulltext("ABCD1234", max_characters=4)
 
@@ -45,7 +48,10 @@ def test_matching_attachment_link_is_preferred_without_fetching_url(library, zot
         },
     }
     zot.children.return_value = [attachment("PAPER001"), attachment("PAPER002")]
-    zot.fulltext_item.side_effect = [ResourceNotFoundError("parent has no index"), {"content": "attachment text"}]
+    zot.fulltext_item.side_effect = [
+        ResourceNotFoundError("parent has no index"),
+        {"content": "attachment text"},
+    ]
 
     result = library.get_item_fulltext("ABCD1234")
 
@@ -124,9 +130,7 @@ def test_offsets_are_zero_based_unicode_code_points_and_coverage_is_explicit(lib
         "totalPages": 5,
     }
 
-    result = library.get_item_fulltext(
-        "ATTACH01", offset=1, max_characters=2
-    )
+    result = library.get_item_fulltext("ATTACH01", offset=1, max_characters=2)
 
     assert result["content"] == "𠮷乙"
     assert result["offset"] == 1
@@ -147,9 +151,7 @@ def test_tail_chunk_reaches_end_without_claiming_full_coverage(library, zot):
     content = "甲乙丙丁"
     zot.fulltext_item.return_value = {"content": content}
 
-    result = library.get_item_fulltext(
-        "ATTACH01", offset=2, max_characters=2
-    )
+    result = library.get_item_fulltext("ATTACH01", offset=2, max_characters=2)
 
     assert result["reading_coverage"] == {
         "start": 2,

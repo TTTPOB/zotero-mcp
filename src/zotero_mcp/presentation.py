@@ -7,9 +7,10 @@ import html
 import re
 from collections.abc import Mapping, Sequence
 from typing import Annotated, Any, Literal
-from zotero_mcp.fulltext import preferred_attachment_key
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer
+
+from zotero_mcp.fulltext import preferred_attachment_key
 
 ReadView = Literal["summary", "metadata", "raw"]
 ReadItemKey = Annotated[
@@ -60,7 +61,9 @@ class _FieldsSetModel(BaseModel):
 class ItemSummary(_FieldsSetModel):
     """Stable discovery fields shared by search and list views."""
 
-    key: str | None = Field(default=None, description="Pass this key as item_key to fulltext tools.")
+    key: str | None = Field(
+        default=None, description="Pass this key as item_key to fulltext tools."
+    )
     version: int | None = None
     item_type: str | None = None
     title: str | None = None
@@ -213,7 +216,9 @@ def _summary(item: Mapping[str, Any], *, search: bool) -> dict[str, Any]:
         "candidate_attachment_key": candidate_key,
         "matched_attachment_key": item_key if search and item_type == "attachment" else None,
     }
-    result.update({name: value for name, value in optional.items() if value is not None and value != ""})
+    result.update(
+        {name: value for name, value in optional.items() if value is not None and value != ""}
+    )
     return result
 
 

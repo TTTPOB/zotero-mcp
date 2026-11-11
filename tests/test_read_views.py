@@ -57,7 +57,7 @@ def test_summary_keeps_native_order_titles_and_attachment_relation():
 
 def test_summary_extracts_attachment_candidate_without_claiming_index():
     item = _native_item("PAPER001", title="Parent")
-    item["links"]["attachment"] = {"href": "http://localhost:23119/api/users/0/items/PDF00001/file"}
+    item["links"]["attachment"] = {"href": "http://localhost:23119/api/users/0/items/PDF00001"}
 
     summary = project_items([item], "summary")[0]
 
@@ -66,20 +66,13 @@ def test_summary_extracts_attachment_candidate_without_claiming_index():
     assert "match" not in summary
 
 
-@pytest.mark.parametrize(
-    "href,expected",
-    [
-        ("http://localhost:23119/api/users/0/items/PDF00001/file/download", "PDF00001"),
-        ("http://localhost:23119/api/users/0/attachments/paperpdf", None),
-    ],
-)
-def test_attachment_candidate_requires_explicit_item_path(href, expected):
+def test_attachment_candidate_does_not_treat_a_filename_as_a_key():
     item = _native_item("PAPER001", title="Parent")
-    item["links"]["attachment"] = {"href": href}
+    item["links"]["attachment"] = {
+        "href": "http://localhost:23119/api/users/0/attachments/paperpdf"
+    }
 
-    summary = project_items([item], "summary")[0]
-
-    assert summary.get("candidate_attachment_key") == expected
+    assert "candidate_attachment_key" not in project_items([item], "summary")[0]
 
 
 def test_summary_omits_missing_optional_fields():
@@ -109,12 +102,29 @@ def test_metadata_is_semantic_and_raw_is_unchanged(library, zot):
 
 
 def test_collections_default_to_compact_projection_and_raw_is_unchanged(library, zot):
-    root = {"key": "COLL0001", "version": 3, "data": {"name": "Reading", "parentCollection": False}, "meta": {"numItems": 4}, "links": {}}
-    child = {"key": "COLL0002", "version": 5, "data": {"name": "Child", "parentCollection": "COLL0001"}, "meta": {"numItems": 0}}
+    root = {
+        "key": "COLL0001",
+        "version": 3,
+        "data": {"name": "Reading", "parentCollection": False},
+        "meta": {"numItems": 4},
+        "links": {},
+    }
+    child = {
+        "key": "COLL0002",
+        "version": 5,
+        "data": {"name": "Child", "parentCollection": "COLL0001"},
+        "meta": {"numItems": 0},
+    }
     zot.collections.return_value = [root, child]
     assert library.get_collections()["items"] == [
         {"key": "COLL0001", "version": 3, "name": "Reading", "item_count": 4},
-        {"key": "COLL0002", "version": 5, "name": "Child", "parent_key": "COLL0001", "item_count": 0},
+        {
+            "key": "COLL0002",
+            "version": 5,
+            "name": "Child",
+            "parent_key": "COLL0001",
+            "item_count": 0,
+        },
     ]
     assert library.get_collections(view="raw")["items"] == [root, child]
 
@@ -195,21 +205,36 @@ def test_parent_context_and_tag_scopes_share_one_batch_and_keep_search_paginatio
         return hits
 
     zot.items.side_effect = items
-    result = library.search_items("body", tags=["review"], qmode="everything", tag_scope="parent", limit=3)
+    result = library.search_items(
+        "body", tags=["review"], qmode="everything", tag_scope="parent", limit=3
+    )
     assert [item["key"] for item in result["items"]] == ["PDF00001"]
-    assert result["items"][0]["parent"] == {"title": "Parent", "creator_summary": "Wang", "year": 2024}
+    assert result["items"][0]["parent"] == {
+        "title": "Parent",
+        "creator_summary": "Wang",
+        "year": 2024,
+    }
     assert result["next_offset"] == 3
     assert result["total"] == 20
     assert zot.items.call_count == 2
     zot.item.assert_not_called()
 
-    result = library.search_items("body", tags=["review"], qmode="everything", tag_scope="either", limit=3)
+    result = library.search_items(
+        "body", tags=["review"], qmode="everything", tag_scope="either", limit=3
+    )
     assert [item["key"] for item in result["items"]] == ["PDF00001", "PDF00002"]
     assert zot.items.call_count == 4
 
 
 def test_note_summary_uses_first_nonempty_plain_text_line_in_every_list(library, zot):
-    note = {"key": "NOTE0001", "version": 1, "data": {"itemType": "note", "note": "<div> </div><p>First &amp; useful</p><p>Second line</p>"}}
+    note = {
+        "key": "NOTE0001",
+        "version": 1,
+        "data": {
+            "itemType": "note",
+            "note": "<div> </div><p>First &amp; useful</p><p>Second line</p>",
+        },
+    }
     zot.top.return_value = [note]
     zot.children.return_value = [note]
     zot.collection_items_top.return_value = [note]

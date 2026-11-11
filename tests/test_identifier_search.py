@@ -251,11 +251,14 @@ async def test_identifier_lookup_is_exposed_and_executed_through_mcp(library, zo
 
     zot.top.return_value = [native("PAPER001", DOI="10.1234/example")]
     async with create_connected_server_and_client_session(build_server(library)) as session:
-        tool = next(t for t in (await session.list_tools()).tools if t.name == "zotero_search_items")
-        result = await session.call_tool("zotero_search_items", {"query": "https://doi.org/10.1234/example"})
+        tool = next(
+            t for t in (await session.list_tools()).tools if t.name == "zotero_search_items"
+        )
+        result = await session.call_tool(
+            "zotero_search_items", {"query": "https://doi.org/10.1234/example"}
+        )
 
     assert "identifier_lookup" in tool.outputSchema["properties"]
     assert result.isError is False
     assert result.structuredContent["items"][0]["key"] == "PAPER001"
     assert result.structuredContent["identifier_lookup"]["found"] is True
-

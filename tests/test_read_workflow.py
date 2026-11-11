@@ -14,7 +14,7 @@ async def test_deterministic_read_workflow_and_envelope_sizes(library, zot):
         "library": {"type": "user", "id": 1},
         "links": {
             "self": {"href": "http://localhost/items/PAPER001"},
-            "attachment": {"href": "http://localhost/items/PDF00001/file"},
+            "attachment": {"href": "http://localhost:23119/api/users/0/items/PDF00001"},
         },
         "data": {
             "itemType": "journalArticle",
@@ -39,7 +39,11 @@ async def test_deterministic_read_workflow_and_envelope_sizes(library, zot):
     zot.children.return_value = [attachment]
     from pyzotero import ResourceNotFoundError
 
-    zot.fulltext_item.side_effect = [ResourceNotFoundError("parent has no index"), {"content": content}, {"content": content}]
+    zot.fulltext_item.side_effect = [
+        ResourceNotFoundError("parent has no index"),
+        {"content": content},
+        {"content": content},
+    ]
 
     async with create_connected_server_and_client_session(
         build_server(library), read_timeout_seconds=timedelta(seconds=10)
