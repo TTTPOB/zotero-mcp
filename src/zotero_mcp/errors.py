@@ -142,7 +142,7 @@ def _param_name(loc: tuple[Any, ...]) -> str:
 
 
 def _is_key_param(name: str) -> bool:
-    return re.search(r"(^|_)keys?$", name) is not None
+    return name == "parent_collection" or re.search(r"(^|_)keys?$", name) is not None
 
 
 def key_source(name: str) -> str:

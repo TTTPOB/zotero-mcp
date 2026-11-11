@@ -174,3 +174,24 @@ async def test_schema_rejects_invalid_arguments_before_library(library, zot, too
     zot.items.assert_not_called()
     zot.delete_item.assert_not_called()
     zot.create_items.assert_not_called()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("tool", "arguments"),
+    [
+        ("zotero_create_collection", {"name": "n", "parent_collection": "Reading list"}),
+        (
+            "zotero_update_collection",
+            {"collection_key": "COLL0001", "version": 1, "parent_collection": "x"},
+        ),
+    ],
+)
+async def test_parent_collection_must_be_a_key_or_empty(library, zot, tool, arguments):
+    result = await _call(library, tool, arguments)
+
+    message = _error(result)["message"]
+    assert message.startswith("parent_collection must be an 8-character Zotero key")
+    assert "zotero_get_collections" in message
+    zot.create_collections.assert_not_called()
+    zot.update_collection.assert_not_called()

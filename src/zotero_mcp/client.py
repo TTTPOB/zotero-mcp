@@ -1715,7 +1715,8 @@ class Library:
         parent_collection: Annotated[
             str | None,
             Field(
-                description="Parent collection key; omit or use an empty string to create at the root."
+                description="Parent collection key; omit or use an empty string to create at the root.",
+                pattern=r"^(?:[A-Za-z0-9]{8})?$",
             ),
         ] = None,
     ) -> WriteResult:
@@ -1737,7 +1738,8 @@ class Library:
         parent_collection: Annotated[
             str | None,
             Field(
-                description="New parent collection key; empty string moves to root, null leaves the parent unchanged."
+                description="New parent collection key; empty string moves to root, null leaves the parent unchanged.",
+                pattern=r"^(?:[A-Za-z0-9]{8})?$",
             ),
         ] = None,
     ) -> WriteResult:
