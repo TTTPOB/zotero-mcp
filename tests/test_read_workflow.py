@@ -14,7 +14,7 @@ async def test_deterministic_read_workflow_and_envelope_sizes(library, zot):
         "library": {"type": "user", "id": 1},
         "links": {
             "self": {"href": "http://localhost/items/PAPER001"},
-            "enclosure": {"href": "http://localhost/items/PDF00001/file"},
+            "attachment": {"href": "http://localhost/items/PDF00001/file"},
         },
         "data": {
             "itemType": "journalArticle",

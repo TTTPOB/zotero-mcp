@@ -6,7 +6,7 @@ import copy
 import re
 from collections.abc import Mapping, Sequence
 from typing import Annotated, Any, Literal
-from urllib.parse import urlparse
+from zotero_mcp.fulltext import preferred_attachment_key
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer
 
@@ -133,7 +133,6 @@ class TagPage(_FieldsSetModel):
 
 _VALID_VIEWS = {"summary", "metadata", "raw"}
 _YEAR_RE = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
-_ENCLOSURE_KEY_RE = re.compile(r"/items/([A-Za-z0-9]{8})(?:/|$)")
 
 
 def normalize_view(view: str) -> ReadView:
@@ -150,17 +149,6 @@ def _data(item: Mapping[str, Any]) -> Mapping[str, Any]:
 def _parent_key(data: Mapping[str, Any]) -> str | None:
     parent = data.get("parentItem")
     return parent if isinstance(parent, str) and parent else None
-
-
-def _enclosure_key(item: Mapping[str, Any]) -> str | None:
-    links = item.get("links")
-    enclosure = links.get("enclosure") if isinstance(links, Mapping) else None
-    href = enclosure.get("href") if isinstance(enclosure, Mapping) else enclosure
-    if not isinstance(href, str):
-        return None
-    path = urlparse(href).path
-    matches = _ENCLOSURE_KEY_RE.findall(path)
-    return matches[-1].upper() if matches else None
 
 
 def _year(data: Mapping[str, Any]) -> int | None:
@@ -214,7 +202,7 @@ def _summary(item: Mapping[str, Any], *, search: bool) -> dict[str, Any]:
     if not isinstance(title, str):
         title = data.get("filename") if isinstance(data.get("filename"), str) else ""
     fulltext: dict[str, Any] = {"read_key": item_key or "", "index_state": "unknown"}
-    candidate_key = item_key if item_type == "attachment" else _enclosure_key(item)
+    candidate_key = item_key if item_type == "attachment" else preferred_attachment_key(item)
     if candidate_key:
         fulltext["candidate_attachment_key"] = candidate_key
     result: dict[str, Any] = {

@@ -56,26 +56,14 @@ def attachment_candidate(attachment: Mapping[str, Any]) -> FulltextCandidate:
 
 
 def preferred_attachment_key(item: Mapping[str, Any]) -> str | None:
-    """Extract an existing enclosure key without fetching its URL."""
+    """Read Zotero's best-attachment link without fetching its URL."""
     links = item.get("links")
-    if not isinstance(links, Mapping):
+    attachment = links.get("attachment") if isinstance(links, Mapping) else None
+    href = attachment.get("href") if isinstance(attachment, Mapping) else None
+    if not isinstance(href, str):
         return None
-    enclosure = links.get("enclosure")
-    values = enclosure if isinstance(enclosure, list) else [enclosure]
-    for value in values:
-        fields = value if isinstance(value, Mapping) else {"value": value}
-        for field in ("key", "attachment_key", "itemKey", "href", "url", "value"):
-            candidate = fields.get(field)
-            if not isinstance(candidate, str):
-                continue
-            match = re.fullmatch(r"[A-Za-z0-9]{8}", candidate)
-            if match:
-                return candidate.upper()
-            path = urlparse(candidate).path
-            match = re.search(r"(?:^|/)(?:items|attachments)/([A-Za-z0-9]{8})(?:/|$)", path)
-            if match:
-                return match.group(1).upper()
-    return None
+    match = re.search(r"/items/([A-Za-z0-9]{8})(?:/|$)", urlparse(href).path)
+    return match.group(1).upper() if match else None
 
 
 def select_attachment(
@@ -84,7 +72,7 @@ def select_attachment(
     parent_key: str,
     preferred_attachment_key: str | None = None,
 ) -> Mapping[str, Any]:
-    """Select a confirmed enclosure, then a unique PDF, without probing fallbacks."""
+    """Select the confirmed best attachment, then a unique PDF, without probing fallbacks."""
     candidates = list(attachments)
     if not candidates:
         raise FulltextError(

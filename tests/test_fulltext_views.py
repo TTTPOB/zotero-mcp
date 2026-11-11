@@ -34,18 +34,18 @@ def test_unique_pdf_is_preferred_over_other_attachment(library, zot):
     zot.fulltext_item.assert_called_once_with("PAPER001")
 
 
-def test_matching_enclosure_link_is_preferred_without_fetching_url(library, zot):
+def test_matching_attachment_link_is_preferred_without_fetching_url(library, zot):
     zot.item.side_effect = lambda item_key: {
         "key": item_key,
         "data": {"itemType": "journalArticle"},
         "links": {
-            "enclosure": {
+            "attachment": {
                 "href": "http://127.0.0.1:23119/api/users/0/items/PAPER002/file",
             }
         },
     }
     zot.children.return_value = [attachment("PAPER001"), attachment("PAPER002")]
-    zot.fulltext_item.return_value = {"content": "enclosure text"}
+    zot.fulltext_item.return_value = {"content": "attachment text"}
 
     result = library.get_item_fulltext("ABCD1234")
 
@@ -53,7 +53,7 @@ def test_matching_enclosure_link_is_preferred_without_fetching_url(library, zot)
     zot.fulltext_item.assert_called_once_with("PAPER002")
 
 
-def test_non_candidate_enclosure_does_not_override_ambiguity():
+def test_non_candidate_attachment_does_not_override_ambiguity():
     candidates = [attachment("PAPER001"), attachment("PAPER002")]
 
     with pytest.raises(FulltextError) as caught:

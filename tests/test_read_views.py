@@ -58,9 +58,9 @@ def test_summary_keeps_native_order_titles_and_attachment_relation():
     assert summaries[2]["parent_key"] is None
 
 
-def test_summary_extracts_enclosure_candidate_without_claiming_index():
+def test_summary_extracts_attachment_candidate_without_claiming_index():
     item = _native_item("PAPER001", title="Parent")
-    item["links"]["enclosure"] = {"href": "http://localhost:23119/api/users/0/items/PDF00001/file"}
+    item["links"]["attachment"] = {"href": "http://localhost:23119/api/users/0/items/PDF00001/file"}
 
     summary = project_items([item], "summary")[0]
 
@@ -79,9 +79,9 @@ def test_summary_extracts_enclosure_candidate_without_claiming_index():
         ("http://localhost:23119/api/users/0/attachments/paperpdf", None),
     ],
 )
-def test_enclosure_candidate_requires_explicit_item_path(href, expected):
+def test_attachment_candidate_requires_explicit_item_path(href, expected):
     item = _native_item("PAPER001", title="Parent")
-    item["links"]["enclosure"] = {"href": href}
+    item["links"]["attachment"] = {"href": href}
 
     summary = project_items([item], "summary")[0]
 
