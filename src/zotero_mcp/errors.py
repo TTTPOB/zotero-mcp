@@ -325,17 +325,18 @@ def from_exception(
         )
 
     if isinstance(
-        original, (CouldNotReachURLError, UploadError, TooManyRetriesError, ZoteroHTTPError)
+        original,
+        (
+            CouldNotReachURLError,
+            UploadError,
+            TooManyRetriesError,
+            ZoteroHTTPError,
+            httpx2.HTTPError,
+            ConnectionError,
+            TimeoutError,
+            OSError,
+        ),
     ):
-        return LibraryError(
-            UNKNOWN_WRITE_RESULT if write else CONNECTION_ERROR,
-            "The Zotero connection ended before the operation was confirmed. Inspect the library before retrying."
-            if write
-            else "Could not complete the connection to Zotero.",
-            retryable=False if write else True,
-            details={"operation": operation} if operation else None,
-        )
-    if isinstance(original, (httpx2.HTTPError, ConnectionError, TimeoutError, OSError)):
         return LibraryError(
             UNKNOWN_WRITE_RESULT if write else CONNECTION_ERROR,
             "The Zotero connection ended before the operation was confirmed. Inspect the library before retrying."

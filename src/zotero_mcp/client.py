@@ -54,8 +54,6 @@ from zotero_mcp.fulltext import (
 from zotero_mcp.fulltext_models import (
     AttachmentTextChunk,
     AttachmentTextContent,
-    AttachmentTextMaxCharacters,
-    AttachmentTextOffset,
     FulltextAttachmentKey,
     FulltextChunk,
     FulltextContextCharacters,
@@ -72,9 +70,9 @@ from zotero_mcp.models import ItemDataList, ItemKey, ItemKeyList, Version, Write
 from zotero_mcp.presentation import (
     ItemMetadataBatch,
     ItemPage,
-    ReadItemKey,
     ReadLimit,
     ReadOffset,
+    ReadProjection,
     ReadTag,
     ReadView,
     TagPage,
@@ -642,12 +640,7 @@ class Library:
                 description="Apply tags to the native hit, its parent, or either level within the current native page. For DOI/ISBN queries tags filter the matching items themselves."
             ),
         ] = "matched_item",
-        view: Annotated[
-            ReadView,
-            Field(
-                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
-            ),
-        ] = "summary",
+        view: ReadProjection = "summary",
     ) -> ItemPage:
         """Search requires a query or at least one valid tag.
 
@@ -827,12 +820,7 @@ class Library:
                 description="1–50 Zotero item keys, including child notes and attachments; results retain input order and duplicates."
             ),
         ],
-        view: Annotated[
-            ReadView,
-            Field(
-                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
-            ),
-        ] = "metadata",
+        view: ReadProjection = "metadata",
     ) -> ItemMetadataBatch:
         """Read 1–50 items by key; each result is ``{index, key, status, item | error}``.
 
@@ -842,13 +830,7 @@ class Library:
         for Zotero's native object.
         """
         keys = [key(k) for k in item_keys]
-        wanted = set(keys)
-        # Not /items/top: child items must be readable. Zotero also returns the
-        # children of each requested item here, so keep only the requested keys.
-        # The limit is explicit (pyzotero defaults to 100); everything() follows
-        # the remaining pages when children push results past one page.
-        returned = self.zot.everything(self.zot.items(itemKey=",".join(sorted(wanted)), limit=100))
-        by_key = {item["key"]: item for item in returned if item.get("key") in wanted}
+        by_key = self._lookup_items(keys)
         entries = []
         for index, item_key in enumerate(keys):
             entry: dict[str, Any] = {"index": index, "key": item_key}
@@ -887,15 +869,10 @@ class Library:
     @operation()
     def get_item_children(
         self,
-        item_key: ReadItemKey,
+        item_key: ItemKey,
         limit: ReadLimit = 25,
         offset: ReadOffset = 0,
-        view: Annotated[
-            ReadView,
-            Field(
-                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
-            ),
-        ] = "summary",
+        view: ReadProjection = "summary",
     ) -> ItemPage:
         """List an item's child attachments, notes or annotations."""
         parent = key(item_key)
@@ -935,15 +912,10 @@ class Library:
     @operation()
     def get_collection_items(
         self,
-        collection_key: ReadItemKey,
+        collection_key: ItemKey,
         limit: ReadLimit = 25,
         offset: ReadOffset = 0,
-        view: Annotated[
-            ReadView,
-            Field(
-                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
-            ),
-        ] = "summary",
+        view: ReadProjection = "summary",
     ) -> ItemPage:
         """List the top-level items directly in a collection, as summaries by default.
 
@@ -988,12 +960,7 @@ class Library:
         self,
         limit: ReadLimit = 25,
         offset: ReadOffset = 0,
-        view: Annotated[
-            ReadView,
-            Field(
-                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
-            ),
-        ] = "summary",
+        view: ReadProjection = "summary",
     ) -> ItemPage:
         """List all top-level items, including independent attachments, as summaries."""
         return self._page(
@@ -1007,17 +974,12 @@ class Library:
     def get_notes(
         self,
         parent_key: Annotated[
-            ReadItemKey | None,
+            ItemKey | None,
             Field(description="Parent item key to restrict notes; omit to list library notes."),
         ] = None,
         limit: ReadLimit = 25,
         offset: ReadOffset = 0,
-        view: Annotated[
-            ReadView,
-            Field(
-                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
-            ),
-        ] = "metadata",
+        view: ReadProjection = "metadata",
     ) -> ItemPage:
         """Read notes, optionally restricted to a parent item."""
         params = {**pagination(limit, offset), "itemType": "note"}
@@ -1032,15 +994,10 @@ class Library:
     @operation()
     def get_annotations(
         self,
-        attachment_key: ReadItemKey,
+        attachment_key: ItemKey,
         limit: ReadLimit = 25,
         offset: ReadOffset = 0,
-        view: Annotated[
-            ReadView,
-            Field(
-                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
-            ),
-        ] = "metadata",
+        view: ReadProjection = "metadata",
     ) -> ItemPage:
         """Read Zotero reader annotations belonging to an attachment."""
         attachment = key(attachment_key)
@@ -1190,8 +1147,8 @@ class Library:
     def read_attachment_text(
         self,
         attachment_key: FulltextAttachmentKey,
-        offset: AttachmentTextOffset = 0,
-        max_characters: AttachmentTextMaxCharacters = 50000,
+        offset: FulltextOffset = 0,
+        max_characters: FulltextMaxCharacters = 50000,
     ) -> AttachmentTextChunk:
         """Read original UTF-8 bytes from one safe text attachment."""
         attachment_key = key(attachment_key)
@@ -1285,9 +1242,10 @@ class Library:
     def _read_indexed_attachment(self, key_: str) -> tuple[str, str, dict[str, Any]]:
         """Read indexed text; return (attachment_key, content, index response).
 
-        A parent item key is accepted and mapped to one of its
-        attachments by the same rules as get_item_fulltext. The common case (a real
-        attachment key) costs one request; the item is fetched only after a miss.
+        The first read usually starts with a paper key and selects one of its
+        attachments by the same rules as get_item_fulltext. Continuations use the
+        returned attachment key and cost one request when its index is available;
+        the item is fetched only after an index miss.
         """
         indexed = self._fetch_index(key_)
         if indexed is not None:

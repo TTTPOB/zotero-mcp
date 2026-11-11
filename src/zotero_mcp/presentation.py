@@ -13,13 +13,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_serializer
 from zotero_mcp.fulltext import preferred_attachment_key
 
 ReadView = Literal["summary", "metadata", "raw"]
-ReadItemKey = Annotated[
-    str,
+ReadProjection = Annotated[
+    ReadView,
     Field(
-        description="Zotero item or collection key.",
-        min_length=8,
-        max_length=8,
-        pattern=r"^[A-Za-z0-9]{8}$",
+        description="Result projection: summary, full semantic metadata, or native Zotero raw records."
     ),
 ]
 ReadLimit = Annotated[int, Field(description="Maximum records per page (1–100).", ge=1, le=100)]
