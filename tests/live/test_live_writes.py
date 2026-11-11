@@ -229,7 +229,8 @@ def test_attach_file_stores_a_readable_copy(mcp, new_item, tmp_path):
     assert result["ok"] and result["results"][0]["stage"] == "upload"
     attachment = result["key"]
     metadata = read_item(mcp, attachment)
-    assert result["version"] == result["results"][0]["version"] == metadata["version"]
+    assert "version" not in result
+    assert "version" not in result["results"][0]
     assert metadata["parent_key"] == parent
     assert metadata["data"]["title"] == "Mine"
     assert metadata["data"]["linkMode"] == "imported_file"
@@ -243,12 +244,14 @@ def test_attach_markdown_creates_once_and_never_duplicates(mcp, new_item):
     created = mcp("attach_markdown", {"parent_key": parent, "content": body})
     assert created["ok"]
     attachment = created["key"]
-    assert created["version"] == created["results"][0]["version"] == version_of(mcp, attachment)
+    assert "version" not in created
+    assert "version" not in created["results"][0]
     assert mcp("read_attachment_text", {"attachment_key": attachment})["content"] == body
 
     same = mcp("attach_markdown", {"parent_key": parent, "content": body})
     assert same["ok"] and same["key"] == attachment
     assert same["results"][0]["status"] == "unchanged"
+    assert same["version"] == same["results"][0]["version"] == version_of(mcp, attachment)
 
     different = mcp(
         "attach_markdown", {"parent_key": parent, "content": "# Title\n\nother"}, error=True

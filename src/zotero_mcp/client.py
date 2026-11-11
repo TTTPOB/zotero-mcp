@@ -2165,9 +2165,7 @@ class Library:
             )
 
         status = "success" if success else "unchanged"
-        uploaded = (success or unchanged)[0]
-        version = _response_version(uploaded) if _response_key(uploaded) == attachment_key else None
-        return _single_write_result(attachment_key, version, status=status, stage="upload")
+        return _single_write_result(attachment_key, status=status, stage="upload")
 
     @operation(write=True)
     def attach_file(
@@ -2184,12 +2182,19 @@ class Library:
             Field(description="Attachment title; omit or use an empty string to use the filename."),
         ] = None,
     ) -> WriteResponse:
-        """Copy an existing absolute-path file into Zotero's local attachment storage."""
+        """Copy a local file into Zotero attachment storage.
+
+        No version is returned after upload; read the attachment before editing it.
+        """
         return self._attach_file(parent_key, file_path, title)
 
     @operation(write=True)
     def attach_markdown(self, parent_key: ItemKey, content: AttachmentTextContent) -> WriteResponse:
-        """Create or reuse the fixed Markdown attachment for one paper."""
+        """Create or reuse the fixed Markdown attachment for one paper.
+
+        Uploads return no version; read the attachment before editing it. Reused
+        attachments may include their last-read version.
+        """
         parent_key = key(parent_key)
         if not isinstance(content, str) or not content:
             raise ValueError("content must contain non-empty Markdown text.")
