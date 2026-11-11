@@ -63,21 +63,21 @@ def test_top_level_items_are_still_added(library, zot, mixed_items):
     result = library.manage_collection_items("COLL0001", ["PAPER001"], "add")
 
     assert result["status"] == "success"
-    assert result["updated"] == ["PAPER001"]
+    assert result["results"][0]["status"] == "success"
     zot.update_item.assert_called_once()
 
 
 def test_removing_child_items_from_a_collection_is_not_blocked(library, zot, mixed_items):
     result = library.manage_collection_items("COLL0001", ["PDF00001"], "remove")
 
-    assert result["unchanged"] == ["PDF00001"]
+    assert result["results"][0]["status"] == "unchanged"
     zot.update_item.assert_not_called()
 
 
 def test_tags_can_still_be_added_to_child_items(library, zot, mixed_items):
     result = library.batch_update_tags(["PDF00001"], add=["checked"])
 
-    assert result["updated"] == ["PDF00001"]
+    assert result["results"][0]["status"] == "success"
     zot.update_item.assert_called_once()
 
 

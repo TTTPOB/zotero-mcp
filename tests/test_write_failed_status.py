@@ -33,7 +33,7 @@ async def test_every_entry_failed_is_an_error_with_readable_results(library, zot
     assert result.structuredContent["ok"] is False
     assert result.structuredContent["status"] == "failed"
     assert [e["status"] for e in result.structuredContent["results"]] == ["failed", "failed"]
-    assert result.structuredContent["failed"]["0"]["code"] == 400
+    assert result.structuredContent["results"][0]["error"]["code"] == "INVALID_ARGUMENT"
     assert json.loads(result.content[0].text) == result.structuredContent
 
 
@@ -72,8 +72,8 @@ async def test_batch_whose_first_key_fails_is_failed_not_partial(library, zot):
     content = result.structuredContent
     assert content["status"] == "failed"
     assert [e["status"] for e in content["results"]] == ["failed", "pending"]
-    assert content["failed"]["ZZZZZZZZ"]["code"] == "NOT_FOUND"
-    assert content["pending"] == ["ABCD1234"]
+    assert content["results"][0]["error"]["code"] == "NOT_FOUND"
+    assert content["results"][1]["key"] == "ABCD1234"
 
 
 def test_batch_that_failed_after_a_success_stays_partial(library, zot):

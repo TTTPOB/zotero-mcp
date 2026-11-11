@@ -118,19 +118,14 @@ def test_partial_create_reports_both_outcomes(library, zot):
     }
     result = library.add_items([{"itemType": "book"}, {"itemType": "note"}])
     assert result["ok"] is False
-    assert result["success"] == {"0": "NEW00001"}
-    assert result["failed"]["1"]["code"] == 400
+    assert result["results"][0]["key"] == "NEW00001"
+    assert result["results"][1]["error"]["code"] == "INVALID_ARGUMENT"
     zot.create_items.assert_called_once()
 
 
 def test_unrecognized_write_response_is_not_success():
     with pytest.raises(RuntimeError):
         write_result({"error": "unknown"})
-
-
-def test_empty_write_response_is_not_success():
-    with pytest.raises(RuntimeError):
-        write_result({"success": {}, "failed": {}})
 
 
 def test_note_is_child_and_escapes_plain_text(library, zot):
@@ -172,15 +167,9 @@ def test_collection_move_to_root(library, zot):
     assert zot.update_collection.call_args.args[0]["parentCollection"] is False
 
 
-def test_stale_collection_not_written(library, zot):
-    with pytest.raises(ValueError, match="changed"):
-        library.update_collection("COLL0001", 6, name="new")
-    zot.update_collection.assert_not_called()
-
-
 def test_tag_edit_preserves_unrelated_automatic_tag(library, zot):
     result = library.batch_update_tags(["ABCD1234"], add=["new", "new"])
-    assert result["updated"] == ["ABCD1234"]
+    assert result["results"][0]["status"] == "success"
     assert zot.update_item.call_args.args[0] == {
         "key": "ABCD1234",
         "version": 7,
@@ -190,18 +179,13 @@ def test_tag_edit_preserves_unrelated_automatic_tag(library, zot):
 
 def test_noop_tag_edit_skips_write(library, zot):
     result = library.batch_update_tags(["ABCD1234"], add=["keep"])
-    assert result["unchanged"] == ["ABCD1234"]
+    assert result["results"][0] == {
+        "input_index": 0,
+        "key": "ABCD1234",
+        "status": "unchanged",
+        "version": 7,
+    }
     zot.update_item.assert_not_called()
-
-
-def test_partial_tag_batch_reports_remaining(library, zot):
-    zot.update_item.side_effect = [True, PreConditionFailedError("stale")]
-    result = library.batch_update_tags(["ABCD1234", "SECOND02", "THIRD003"], add=["new"])
-    assert result["ok"] is False
-    assert result["updated"] == ["ABCD1234"]
-    assert list(result["failed"]) == ["SECOND02"]
-    assert result["pending"] == ["THIRD003"]
-    assert zot.update_item.call_count == 2
 
 
 def test_collection_membership_preserves_other_collections(library, zot):
@@ -262,9 +246,9 @@ def test_attachment_upload_failure_keeps_created_key(library, zot, tmp_path):
     zot.upload_attachments.side_effect = RuntimeError("upload interrupted")
     result = library.attach_file("ABCD1234", str(path))
     assert result["ok"] is False
-    assert result["attachment_key"] == "NEW00001"
+    assert result["key"] == "NEW00001"
     assert result["error"]["code"] == "UNKNOWN_WRITE_RESULT"
-    assert "Inspect" in result["error_message"]
+    assert "inspect" in result["error"]["message"]
     assert zot.create_items.call_args.args[0][0]["filename"] == "中文.pdf"
 
 

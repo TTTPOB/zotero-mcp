@@ -159,7 +159,7 @@ def seed(library, tmp_path_factory):
             [
                 {
                     "itemType": "annotation",
-                    "parentItem": pdf["attachment_key"],
+                    "parentItem": pdf["key"],
                     "annotationType": "highlight",
                     "annotationText": "live highlighted text",
                     "annotationColor": "#ffd400",
@@ -177,7 +177,7 @@ def seed(library, tmp_path_factory):
     deadline = time.monotonic() + 60
     while True:
         try:
-            library.get_item_fulltext(alpha, attachment_key=pdf["attachment_key"])
+            library.get_item_fulltext(alpha, attachment_key=pdf["key"])
             break
         except LibraryError:
             if time.monotonic() > deadline:
@@ -187,8 +187,8 @@ def seed(library, tmp_path_factory):
     return Seed(
         alpha=alpha,
         beta=beta,
-        pdf=pdf["attachment_key"],
-        text=text["attachment_key"],
+        pdf=pdf["key"],
+        text=text["key"],
         note=note,
         annotation=annotation,
         parent=parent,
@@ -207,7 +207,7 @@ def new_item(mcp):
             "add_items", {"items": [{"itemType": "journalArticle", "title": title, **fields}]}
         )
         key = result["results"][0]["key"]
-        version = result["successful"]["0"]["version"]
+        version = result["results"][0]["version"]
         return key, version
 
     return create

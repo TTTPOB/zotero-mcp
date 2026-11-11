@@ -92,8 +92,7 @@ class ZoteroMCP(FastMCP):
         try:
             result = await super().call_tool(name, arguments)
             if isinstance(result, tuple) and len(result) == 2 and isinstance(result[1], dict):
-                # Keep the legacy text channel a serialization of structuredContent,
-                # including model defaults added during output validation.
+                # Keep text and structuredContent identical after output validation.
                 structured = result[1]
                 text = json.dumps(structured, ensure_ascii=False, separators=(",", ":"))
                 status = structured.get("status")
@@ -148,11 +147,13 @@ with the returned attachment_key, text_revision and next_offset. zotero_find_ite
 locates a phrase.
 - Browse: zotero_get_collections, then zotero_get_collection_items; child attachments and \
 notes come from zotero_get_item_children.
-- Edit: read the item first for its local version. zotero_update_item returns the new version for \
-the next edit. On VERSION_CONFLICT, error.details.current_version is the current version; \
+- Edit: use the local version returned by a create or update, or read the item first. A known \
+version is returned for the next edit; an unavailable version is omitted. On VERSION_CONFLICT, \
+error.details.current_version is the current version; \
 resubmit only after confirming the change still applies.
 Item keys are 8 characters (e.g. ABCD2345); collection keys are not item keys. Batch writes \
-may partially succeed: check results per entry and never resubmit successful ones. Writes \
+may partially succeed: check each results entry's status, key, version and error; never resubmit \
+successful ones. Writes \
 require local authorization via zotero-mcp authorize. Fulltext comes from Zotero's own index.\
 """
 

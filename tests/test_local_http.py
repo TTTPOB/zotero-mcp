@@ -112,6 +112,52 @@ def test_collection_create_stays_local(wire):
     assert json.loads(calls[0].content) == [{"name": "中文集合", "parentCollection": False}]
 
 
+def test_batch_list_edits_read_write_and_read_back_each_item_once(wire):
+    library, calls, responses = wire
+    responses.append((200, [{"field": "title"}]))
+    library.zot.check_items([{"title": "warm field cache"}])
+    calls.clear()
+    responses.extend(
+        [
+            (
+                200,
+                {"key": "ABCD1234", "version": 7, "data": {"tags": [{"tag": "keep", "type": 1}]}},
+            ),
+            (204, ""),
+            (200, {"key": "ABCD1234", "version": 12, "data": {}}),
+        ]
+    )
+    result = library.batch_update_tags(["ABCD1234"], add=["new"])
+    assert [c.method for c in calls] == ["GET", "PATCH", "GET"]
+    assert calls[1].headers["If-Unmodified-Since-Version"] == "7"
+    assert json.loads(calls[1].content) == {
+        "key": "ABCD1234",
+        "version": 7,
+        "tags": [{"tag": "keep", "type": 1}, {"tag": "new"}],
+    }
+    assert result["results"][0]["version"] == 12
+
+
+def test_collection_add_reuses_its_child_preflight_read(wire):
+    library, calls, responses = wire
+    responses.append((200, [{"field": "title"}]))
+    library.zot.check_items([{"title": "warm field cache"}])
+    calls.clear()
+    responses.extend(
+        [
+            (200, {"key": "COLL0001", "version": 3, "data": {"name": "Reading"}}),
+            (200, {"key": "ABCD1234", "version": 7, "data": {"collections": []}}),
+            (204, ""),
+            (200, {"key": "ABCD1234", "version": 12, "data": {}}),
+        ]
+    )
+    result = library.manage_collection_items("COLL0001", ["ABCD1234"], "add")
+    assert [c.method for c in calls] == ["GET", "GET", "PATCH", "GET"]
+    assert calls[0].url.path == "/api/users/0/collections/COLL0001"
+    assert json.loads(calls[2].content)["collections"] == ["COLL0001"]
+    assert result["results"][0]["version"] == 12
+
+
 def test_native_batch_partial_failure_is_preserved(wire):
     library, calls, responses = wire
     responses.append(
@@ -123,7 +169,7 @@ def test_native_batch_partial_failure_is_preserved(wire):
     responses.insert(0, (200, [{"field": "title"}]))
     result = library.add_items([{"itemType": "book"}, {"itemType": "book", "title": "bad"}])
     assert result["ok"] is False
-    assert result["failed"]["1"]["code"] == 400
+    assert result["results"][1]["error"]["code"] == "INVALID_ARGUMENT"
     assert [c.method for c in calls] == ["GET", "POST"]
 
 
@@ -282,8 +328,9 @@ def test_attachment_upload_uses_local_receiver_and_registration(wire, monkeypatc
     monkeypatch.setattr(http, "post", upload)
     result = library.attach_file("ABCD1234", str(path))
     assert result["ok"] is True
-    assert result["attachment_key"] == "ATTACH01"
-    assert result["upload"]["success"][0]["version"] == 8
+    assert result["key"] == "ATTACH01"
+    assert "version" not in result
+    assert "version" not in result["results"][0]
     assert len(uploads) == 1
     assert calls[-1].url.path == "/api/users/0/items/ATTACH01/file"
     assert b"upload=registration-test" in calls[-1].content

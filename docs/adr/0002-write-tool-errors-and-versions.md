@@ -1,6 +1,6 @@
 # ADR 0002：写工具的错误码、isError 与版本返回
 
-- 状态：已采纳
+- 状态：已采纳；保留旧聚合字段、未知版本使用 null、批量结果不带版本的部分由 [ADR 0007](0007-compact-write-outcomes.md) 取代，其余决定继续有效。
 - 决策者：Agent（人类于 2026-11-09 授权修复此问题，具体方案由 Agent 决定）
 - 日期：2026-11-09
 - 涉及：`src/zotero_mcp/client.py`（`update_item`、`delete_item`、`update_collection`、`delete_collection`、`add_items`、批量标签/集合修改）、`src/zotero_mcp/server.py`（`ZoteroMCP.call_tool`）、`src/zotero_mcp/models.py`
