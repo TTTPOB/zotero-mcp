@@ -58,15 +58,17 @@
 | `attach_file` | 将绝对路径的本地文件复制到 Zotero 附件存储 |
 | `attach_markdown` | 幂等创建固定名称 `paper-chew-fulltext.md` Markdown 附件 |
 
-修改或删除条目前，先读取其 `version`。key 不存在时 `update_item`、`delete_item`、`update_collection`、`delete_collection` 返回 `NOT_FOUND`，重新搜索取得 key。集合改名/移动也需要本地版本。发生版本冲突时，`error.details.current_version` 给出当前本地版本；确认自己的修改仍然适用后，可以用它重新提交，否则重新读取后决定如何修改。程序不会用旧数据重试覆盖。
+所有写工具返回 `ok`、`status`、`results[]`；每项按 `input_index` 对应输入，带状态和已知的 `key`、`version`、`stage`、`error`。未设置字段直接省略。单目标工具还在顶层带已知的 `key`、`version`，附件的 `key` 是附件 key；`add_items`、`batch_update_tags`、`manage_collection_items` 只通过结果项报告。
 
-`update_item` 只更改你传入的字段，但数组字段会整体替换。因此，增删标签优先使用 `batch_update_tags`，调整集合归属优先使用 `manage_collection_items`。
+修改或删除需要最近读取的本地 `version`。`add_items` 从创建响应返回 `results[i].version`；`create_note`、`create_collection` 也返回已知的新版本，可直接用于更新。`update_item`、`update_collection` 返回写入后读回的实际版本，批量标签/集合归属修改在各自结果项返回读回版本，未变化项可带当前版本。`attach_file` 和 `attach_markdown` 上传后不返回版本，编辑附件前先读取；`attach_markdown` 复用已有附件时可返回读取到的版本。删除没有新版本。无法取得版本时省略该字段，下次修改前先读取，不自行加一。
 
-批量标签或集合归属修改遇到错误时会停止。`results` 按输入索引和 key 关联逐项结果，旧的 `updated`、`unchanged`、`failed`、`pending` 等聚合字段继续保留。批量创建遵循 Zotero 的逐条结果，成功和失败可同时存在；全部失败时 `status` 为 `failed` 且 MCP `isError=true`（`results` 仍可读），部分成功时 `isError=false`；响应未确认的输入需要检查库状态，不能当作未执行直接重放。
+key 不存在时 `update_item`、`delete_item`、`update_collection`、`delete_collection` 返回 `NOT_FOUND`，重新搜索取得 key。版本冲突的 `error.details.current_version` 给出当前本地版本；确认自己的修改仍然适用后才用它重新提交，程序不会用旧数据重试覆盖。
 
-附件上传若在创建条目之后失败，保留 `attachment_key` 和 `stage`。先检查该附件，避免重新调用产生重复项。工具级错误使用稳定的 `code`、`message`、`retryable` 和 MCP `isError=true`；部分批量结果保留已完成项，恢复方法见 [错误与写入](errors-and-writes.md)。`attach_markdown` 固定使用 `paper-chew-fulltext.md`，同内容附件返回 `unchanged`，同名异内容、多同名或已有附件无法读取时不会创建第二份，也不会自动删除。
+`update_item` 只更改传入字段，但数组字段会整体替换。增删标签优先使用 `batch_update_tags`，调整集合归属优先使用 `manage_collection_items`。创建和单条更新若发现非空字段未按原字段存储，或作者角色被 Zotero 替换，会在 `results[i].warnings` 提示字段路径及 `get_item_schema`；这不把已完成的写入判为失败，也不警告普通规范化。
 
-`update_item` 和 `update_collection` 成功后返回新的本地 `version`（顶层和 `results[0].version`），连续修改时直接使用；读回失败时为 `null`，下一次修改前重新读取，不自行把旧版本加一。
+批量标签或集合归属修改遇到错误立即停止，后续结果项为 `pending`。批量创建遵循 Zotero 的逐条结果，成功和失败可同时存在；全部失败时顶层 `status=failed`、MCP `isError=true`，部分成功时 `status=partial`、`isError=false`。未确认的写入为 `unknown`、`isError=true`；先检查库状态，不直接重放。每项错误统一为 `{code, message, retryable, details?}`；创建失败的原 HTTP 数字码在 `details.http_status`。
+
+附件上传未确认时保留已创建的顶层 `key` 及 `results[0].key`，阶段在 `results[0].stage`。先检查该附件，避免重新调用产生重复项。`attach_markdown` 固定使用 `paper-chew-fulltext.md`，同内容附件的结果项为 `unchanged`，同名异内容、多同名或已有附件无法读取时不创建第二份，也不自动删除。详细结果与恢复方法见 [错误与写入](errors-and-writes.md)。
 
 ## 示例
 
