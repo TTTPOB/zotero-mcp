@@ -1,26 +1,46 @@
 # 读取视图与搜索契约
 
-本项目的列表读取默认返回面向 Agent 任务的 `summary`，需要完整语义字段时显式请求 `metadata`，需要 Zotero 原生对象时请求 `raw`。视图只改变返回投影，不改变本地 API 查询本身。
+列表默认返回精简的 `summary`，完整语义字段使用 `metadata`，Zotero 原生对象使用 `raw`。投影不改变原生顺序，也不合并父子条目。
 
-## 视图
-
-读取条目支持 `view`：
+## 条目视图
 
 | 视图 | 内容 | 默认工具 |
 | --- | --- | --- |
-| `summary` | `key`、`version`、`item_type`、完整 `title`、`year`、`creator_summary`、`doi`、父条目关系和全文入口；搜索时附加命中关系 | `search_items`、`get_recent`、`get_item_children`、`get_collection_items` |
+| `summary` | 发现文献所需的标题、作者、年份、标识符及关系字段 | `search_items`、`get_recent`、`get_item_children`、`get_collection_items` |
 | `metadata` | `key`、`version`、`item_type`、`parent_key` 和完整语义 `data`，不带顶层 `library`/`links` | `get_item_metadata`（每项的 `item`）、`get_notes`、`get_annotations` |
-| `raw` | Zotero 原生记录的深拷贝，不删字段 | 所有支持 `view` 的工具均可显式请求 |
+| `raw` | Zotero 原生记录的深拷贝，不删字段 | 支持 `view` 的工具均可显式请求 |
 
-`summary` 不截断标题，不删除条目，也不改变原生顺序。`fulltext.index_state` 固定为 `unknown`，因为附件存在或 MIME 类型不能证明 Zotero 索引已经可读。`fulltext.read_key` 是可直接传给全文工具的 key；附件自身或 `links.enclosure.href` 的明确 `/items/<8位key>` 路径中解析出合法 Zotero key 时提供 `candidate_attachment_key`，但不会据此宣称索引可读。
+摘要始终包含 `key`、`version`、`item_type`、`title`。`year`、`creator_summary`、`doi`、`parent_key`、`matched_attachment_key`、`candidate_attachment_key` 没有值时省略，不返回 `null` 或空字符串占位。普通条目的完整标题保留；笔记以去除 HTML 后的第一个非空行作为标题，最多 120 个字符。
 
-`metadata.data` 保留摘要、作者、标签、集合及条目类型特有的语义字段。它不是可直接写回的 payload；更新仍使用变化字段补丁和本地 `version`。
+`key` 可以直接作为 `get_item_fulltext` 或 `find_item_fulltext` 的 `item_key`。附件摘要的 `candidate_attachment_key` 是附件自身的 key；父文献则从 Zotero 的 `links.attachment.href` 提取最佳附件 key。该字段只是候选，不保证索引可读。摘要不含重复的全文入口对象或固定为未知的索引状态。
 
-MCP 结构化输出模型只序列化业务结果实际设置的字段（`model_fields_set`），因此 `view="raw"` 的每条结果的 `item` 与原生对象一致，raw 列表的 `structuredContent["items"]` 与原生列表一致，不会因 schema 默认值新增 `null` 字段；summary/metadata 仍只输出投影明确设置的字段。
+`metadata.data` 保留摘要、作者、标签、集合及类型特有字段。它不是可直接写回的 payload；更新仍使用变化字段补丁和本地 `version`。MCP 输出只序列化业务结果实际设置的字段，因此 `raw` 不会因 schema 默认值新增字段。
 
-## 搜索与附件
+## 集合视图
 
-`qmode="everything"` 默认不发送 `itemType`，因此保留 Zotero 返回的附件全文命中。需要限制返回对象时显式传 `item_type`，例如 `item_type="-attachment"`。为兼容原有元数据搜索，`qmode="titleCreatorYear"` 在未显式指定 `item_type` 时仍使用 `-attachment`。
+`get_collections` 默认 `view="summary"`，每个集合返回：
+
+- `key`、`version`、`name`；
+- `item_count`：Zotero 的 `meta.numItems`，是集合直接包含的条目数；
+- `parent_key`：仅子集合提供，根集合省略。
+
+`view="raw"` 返回含 `library`、`links`、`meta`、`data` 的原生记录。集合不提供 `metadata` 视图。
+
+## 搜索与父条目
+
+`qmode="everything"` 默认不发送 `itemType`，保留附件全文命中。`qmode="titleCreatorYear"` 未指定类型时使用 `-attachment`。显式 `item_type` 会先去除首尾空白；空字符串或纯空白等同于未提供。
+
+普通搜索保留实际命中对象的 `key`。附件命中提供 `matched_attachment_key`；子附件、子笔记等提供 `parent_key`。`summary` 还提供 `parent`，内含父条目的 `title`、`creator_summary`、`year`，缺失值同样省略。不会编造 snippet、字段命中或相关性分数，也不会把子命中替换成父文献。
+
+父条目按当前原生页的不同 key 统一批量读取，不逐条请求。没有子命中时不读取父条目；`metadata`、`raw` 仅在父标签筛选需要时读取父条目。
+
+标签筛选通过 `tag_scope` 指定层级：
+
+- `matched_item`（默认）：由 Zotero 筛选命中对象的标签。
+- `parent`：在当前原生页的父条目标签上筛选；顶层命中检查自身。
+- `either`：命中对象或其父条目任一层级满足即可。
+
+不同 `tags` 列表项是 AND；单项中的 `a || b` 是 OR；`-tag` 排除标签。父标签筛选与摘要上下文共用同一批父条目，不重复请求。
 
 ### 按 DOI / ISBN 精确查找
 
@@ -33,65 +53,14 @@ MCP 结构化输出模型只序列化业务结果实际设置的字段（`model_
 - 与普通搜索的差异：`qmode` 被忽略，`item_type` 只在显式给出时转发给 Zotero；`tags` 在精确命中之后过滤，三种 `tag_scope` 等价（命中的都是顶层条目）；分页针对精确命中的列表，`total` 是精确命中总数，`next_offset` 在还有更多精确命中时给出。候选上限 500 条/查询，超过时 `identifier_lookup.candidates_truncated=true`。
 - Zotero 10.0.6 保存条目时会把 Extra 里的 `DOI:` 行移入 DOI 字段，所以 Extra 兜底只对较旧或同步来的数据起作用。
 
-搜索结果采用“原生命中 + 关系字段”的最小契约，不扫描全库，也不把附件命中无界地去重或替换成父文献：
-
-- 原生记录的 `key` 始终是 Zotero 实际命中的对象 key。
-- 附件命中提供 `matched_attachment_key`，并在存在父文献时提供 `parent_key`。
-- 搜索摘要提供 `match_details_available=false`，不编造字段命中、snippet 或相关性分数；关系字段只说明原生附件和父条目 key。
-- 父文献不会因为附件命中被自动拉取或重复返回；需要父文献语义时按 `parent_key` 读取。
-- 独立附件保留在结果中，`parent_key` 为 `null`。
-
-标签筛选通过 `tag_scope` 明确层级：
-
-- `matched_item`（默认）：把标签传给 Zotero，约束原生命中对象。
-- `parent`：不把标签传给上游；对当前有限页的附件命中读取其父条目并在父条目标签上筛选。
-- `either`：原生命中对象或父条目任一层级满足标签即可。
-
-不同 `tags` 列表项仍是 AND；单项中的 `a || b` 是 OR；`-tag` 排除标签。`parent`/`either` 只对当前上游页做有界父条目读取，不改变上游 offset，也不把过滤后的输出数量当作下一页 offset。
-
 ## 分页
 
-列表结果包含 `items`、请求的 `offset` 和 `next_offset`。如果 Zotero 响应提供有效的 `Link: ... rel="next"`，从 next URL 的 `start` 读取下一偏移；如果提供 `Total-Results`，用它判断精确满页是否已经结束，并在结果中附带 `total`。这些值表示原生查询结果，不是父标签过滤后的精确总数。
+列表返回 `items`、请求的 `offset` 和 `next_offset`。有 `Link: ... rel="next"` 时使用 next URL 的 `start`；有 `Total-Results` 时附带 `total` 并判断末页。父条目批量读取不会覆盖搜索页原来的分页信息。
 
-响应没有可用分页头时，继续使用保守 fallback：返回数量等于 `limit` 才给出 `offset + limit`，否则 `next_offset` 为 `null`。当 `Total-Results` 存在但上游返回空页时也返回 `null`，避免重复请求同一 offset 形成循环。这可能需要最后一次空请求，但不会为了计算父映射而无界扫描。条目发生变化造成的普通 offset 漂移也不被伪装成快照保证。
+普通搜索的分页位置与总数来自原生查询，而不是父标签过滤后的结果。本页过滤为空仍可能有下一页，必须按返回的 `next_offset` 继续。没有可靠响应头时，满页才给出 `offset + limit`；否则返回 `null`。原生空页结束分页。分页不是库修改期间的快照。
 
-## 可复现体积测量
+## 体积与连续阅读验证
 
-`tests/test_read_views.py::test_fixed_fixture_summary_size_is_reproducible` 使用固定的三个合成条目（长摘要、八位作者、完整标题、一个独立 PDF），采用：
+离线测试用固定的三个合成条目确认摘要明显小于 raw，同时保留完整标题、独立 PDF、数量和顺序。体积断言使用比例，不把某个 JSON 字符数冻结成接口契约。
 
-```python
-json.dumps(value, ensure_ascii=False, indent=2)
-```
-
-单份业务对象的字符数为：
-
-| 投影 | 条目数 | 字符数 |
-| --- | ---: | ---: |
-| `raw` | 3 | 6167 |
-| `summary` | 3 | 1226 |
-
-该数字证明固定 fixture 下投影体积变化，同时确认完整标题、独立 PDF、数量和顺序都保留。它不是用户提供 JSONL 的回放结果，也不是 tokenizer 的 token 测量。
-
-`tests/test_read_workflow.py::test_deterministic_read_workflow_and_envelope_sizes` 还执行一个固定 mock MCP 流程：recent summary → 使用 `fulltext.read_key` 读取并选择附件 → 使用返回的 `attachment_key` 与 `text_revision` 续读，再断言正文拼接顺序。该流程的业务 page 测量公式为：
-
-```python
-len(json.dumps(recent.structuredContent, ensure_ascii=False, separators=(",", ":")))
-```
-
-固定 fixture 的业务 page 为 `302` 字符。模拟 MCP envelope 包含 `content`（工具文本块）、`structuredContent` 和 `isError`，测量公式为：
-
-```python
-len(
-    json.dumps(
-        {
-            "content": [{"type": block.type, "text": block.text} for block in recent.content],
-            "structuredContent": recent.structuredContent,
-            "isError": recent.isError,
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-)
-```
-
-该 envelope 为 `724` 字符。两者都是确定性 mock 业务数据的 JSON 字符数，不是用户 JSONL 回放、真实 LLM Agent 任务成功率或 tokenizer token 数。
+内存 MCP 测试执行 recent summary → 传摘要 `key` 作为 `item_key` 读取 → 传返回的 `attachment_key` 作为 `item_key` 并携带 `text_revision` 续读，验证正文拼接顺序。测量对象为 JSON 字符数，而非 tokenizer token 数或真实 Agent 成功率。

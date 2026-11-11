@@ -9,8 +9,8 @@
 | `search_items` | 搜索标题/作者/年份、标签；`qmode=everything` 包含 Zotero 索引的文本；整串是 DOI/ISBN 时精确查找 |
 | `get_item_metadata` | 一次按 `item_keys`（1–50 个）读取语义元数据、`key` 和本地 `version`，子笔记/附件也可读；`view=raw` 获取原生对象 |
 | `get_item_children` | 列出子附件、笔记或批注；key 不存在（包括传入集合 key）返回 `NOT_FOUND`，只有确实没有子条目才返回空列表 |
-| `get_collections` | 列出集合及其父集合和版本 |
-| `get_collection_items` | 列出直接属于某集合的顶层条目（独立附件、独立笔记也是顶层，仍会列出）；不含子附件/子笔记，子条目用 `get_item_children`，summary 的 `fulltext.candidate_attachment_key` 给出最佳附件；key 不是已有集合（包括传入条目 key）时返回 `NOT_FOUND`，不会退回整库条目，集合 key 用 `get_collections` 查 |
+| `get_collections` | 默认返回集合的 `key`、`version`、`name`、`item_count`，子集合另有 `parent_key`；`view=raw` 返回原生对象 |
+| `get_collection_items` | 列出直接属于某集合的顶层条目（独立附件、独立笔记也是顶层，仍会列出）；不含子附件/子笔记，子条目用 `get_item_children`，summary 的顶层 `candidate_attachment_key` 给出最佳附件候选；key 不是已有集合（包括传入条目 key）时返回 `NOT_FOUND`，不会退回整库条目，集合 key 用 `get_collections` 查 |
 | `get_tags` | 列出标签名；`items` 为 `{"tag": "名称"}` 数组，不含标签类型和条目数 |
 | `get_recent` | 按添加时间列出最近的顶层条目 |
 | `get_notes` | 读取笔记，可指定父条目（父条目不存在返回 `NOT_FOUND`） |
@@ -22,15 +22,15 @@
 | `export_items` | 通过本地 Zotero 导出顶层条目的 BibTeX、RIS、CSL JSON，不包含子笔记/附件 |
 | `get_citation_items` | 按输入 key 获取规范引用 URI、选择链接、citation key 和 CSL JSON |
 
-搜索、最近条目、集合条目、子条目列表默认使用 `view=summary`；`view=metadata` 保留语义元数据，`view=raw` 返回原生记录。笔记和批注列表默认 metadata，保留正文。视图不截断完整标题、不静默隐藏独立附件，也不从附件存在推断索引可读。
+搜索、最近条目、集合条目、子条目列表默认使用 `view=summary`；`view=metadata` 保留语义元数据，`view=raw` 返回原生记录。笔记和批注列表默认 metadata，保留正文。摘要始终保留 `key`、`version`、`item_type`、`title`，其余没有值的可选字段省略；`key` 可直接作为全文工具的 `item_key`。普通条目保留完整标题，笔记用去除 HTML 后的首个非空行作标题（最多 120 字符）。不会静默隐藏独立附件，也不从附件存在推断索引可读。
 
-搜索需要 `query` 或有效 `tags` 至少一项，tags-only 合法。`qmode=everything` 默认不排除附件，显式 `item_type` 筛选原生命中对象（空字符串或纯空白等同于不传；支持 `book || journalArticle`、`-attachment` 组合写法，类型名不是 Zotero 已知类型时返回 `INVALID_ARGUMENT`，可用 `get_item_schema` 查看）；结果提供父 key，保持上游顺序而不合并父子条目。`tag_scope=matched_item`（默认）由 Zotero 筛选命中对象的标签，`parent` / `either` 在当前原生页内检查相应层级。
+搜索需要 `query` 或有效 `tags` 至少一项，tags-only 合法。`qmode=everything` 默认不排除附件，显式 `item_type` 筛选原生命中对象（空字符串或纯空白等同于不传；支持 `book || journalArticle`、`-attachment` 组合写法，类型名不是 Zotero 已知类型时返回 `INVALID_ARGUMENT`，可用 `get_item_schema` 查看）；子命中摘要提供 `parent_key` 及 `parent`（标题、作者、年份），在当前页统一批量读取父条目，保持上游顺序而不合并父子条目。`tag_scope=matched_item`（默认）由 Zotero 筛选命中对象的标签，`parent` / `either` 在当前原生页内检查相应层级。
 
 整个 `query` 是一个 DOI（裸 DOI、`doi:` 前缀或 `https://doi.org/`、`http://dx.doi.org/` 链接，不区分大小写）或 ISBN-10/13（连字符、空格可有可无）时，`search_items` 进入**标识符精确查找**：只返回 DOI 字段（或 Extra 里的 `DOI:` 行）、ISBN 字段与之完全相等的顶层条目；只引用该 DOI 的论文、目标的子笔记和附件都不会返回，不需要 `qmode` / `item_type`。响应带 `identifier_lookup`（`type`、规范化后的 `value`、`match: "exact"`、`found`、每条命中的 `matches[].field`），0 条时 `found=false` 并附 `message`，表示库里没有该标识符。该模式下 `tags` / `tag_scope` 筛选命中条目本身，`offset`、`limit`、`next_offset`、`total` 只在精确命中的条目里翻页。详见 [读取视图与搜索](read-views.md)。
 
 列表工具接受 `limit`（1–100）和 `offset`。始终用返回的 `next_offset` 续页，`null` 表示结束；父标签过滤后即使本页为空，也可能还有下一页。分页使用原生页的已消费位置及响应信息；上游没有可靠分页信息且最后一页刚好满页时，可能需要再请求一次空页。它不提供库修改期间的快照保证。
 
-全文工具接受论文或附件 key。传父文献时透明选择附件；无法确定时返回候选清单，再指定 `attachment_key`。续读传回实际附件 key 和 `text_revision`，文本改变会要求重新开始。偏移以 0 起始 Unicode code point 计数，`max_characters` 为 1–50,000。索引页数和本次返回的文本范围分别表达，不表示 Agent 已通读附件。
+`get_item_fulltext`、`find_item_fulltext` 统一用 `item_key` 接受论文或附件 key。父文献优先使用 `links.attachment.href` 指向且确属子附件的最佳附件；没有首选时使用唯一附件或唯一 PDF。无法确定时返回候选清单，把候选的 `attachment_key` 作为 `item_key` 再试。续读把返回的实际 `attachment_key` 作为 `item_key`，并传回 `text_revision`，文本改变会要求重新开始。偏移以 0 起始 Unicode code point 计数，`max_characters` 为 1–50,000。索引页数和本次返回的文本范围分别表达，不表示 Agent 已通读附件。
 
 `find_item_fulltext` 只查一个附件（可传附件 key，或父文献 key 自动选择附件），使用不区分大小写的字面量匹配，返回片段及原文字符位置，不进行全库扫描。`read_attachment_text` 则读取附件文件本身：正常接受 `text/markdown` 或 `text/plain` 以及 `.md`、`.markdown`、`.txt` 扩展名；兼容旧的 `.md/.markdown` generic MIME，但仍要求原始 bytes 通过二进制签名、UTF-8 和 50 MiB 检查。它返回原始 bytes 的 SHA-256，不使用索引的 `text_revision`。详见 [读取视图](read-views.md) 与 [全文阅读](fulltext-reading.md)。
 
