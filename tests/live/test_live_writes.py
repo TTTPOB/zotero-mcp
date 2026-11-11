@@ -143,12 +143,12 @@ def test_native_collection_create_version_and_collection_lifecycle(mcp):
         "update_collection",
         {"collection_key": sub, "version": collection(sub)["version"], "parent_collection": other},
     )
-    assert collection(sub)["data"]["parentCollection"] == other
+    assert collection(sub)["parent_key"] == other
     mcp(
         "update_collection",
         {"collection_key": sub, "version": collection(sub)["version"], "parent_collection": ""},
     )
-    assert collection(sub)["data"]["parentCollection"] is False
+    assert "parent_key" not in collection(sub)
 
     result = mcp(
         "delete_collection", {"collection_key": sub, "version": collection(sub)["version"]}
@@ -455,7 +455,7 @@ def test_native_create_data_reports_field_relocation_and_warns(mcp, library):
     assert native["data"] == stored["data"]
     result = mcp("add_items", {"items": [sent]})
     assert (
-        "publicationTitle on book is absent from stored data; extra gained content"
+        "publicationTitle is not a book field: Zotero stored the item without it and changed extra"
         in result["results"][0]["warnings"][0]
     )
     assert (
@@ -475,7 +475,7 @@ def test_native_create_data_reports_creator_replacement_and_warns(mcp, library):
     assert native["data"] == library.zot.item(native["key"])["data"]
     result = mcp("add_items", {"items": [sent]})
     assert (
-        "creators[0].creatorType on journalArticle changed from director to author"
+        "creators[0].creatorType director is not valid for journalArticle: Zotero stored author"
         in result["results"][0]["warnings"][0]
     )
     changed = mcp(
@@ -486,4 +486,4 @@ def test_native_create_data_reports_creator_replacement_and_warns(mcp, library):
             "changes": {"creators": sent["creators"]},
         },
     )
-    assert "changed from director to author" in changed["results"][0]["warnings"][0]
+    assert "Zotero stored author" in changed["results"][0]["warnings"][0]

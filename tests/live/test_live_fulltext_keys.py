@@ -14,9 +14,7 @@ def test_upstream_best_attachment_prefers_first_pdf_and_reads_in_one_call(mcp, s
 
     path = tmp_path / "second.pdf"
     path.write_bytes(minimal_pdf("second indexed words"))
-    second = mcp("attach_file", {"parent_key": seed.alpha, "file_path": str(path)})[
-        "attachment_key"
-    ]
+    second = mcp("attach_file", {"parent_key": seed.alpha, "file_path": str(path)})["key"]
     try:
         raw = read_item(mcp, seed.alpha, view="raw")
         best = raw["links"]["attachment"]["href"].rsplit("/", 1)[-1]
@@ -34,10 +32,6 @@ def test_upstream_best_attachment_prefers_first_pdf_and_reads_in_one_call(mcp, s
         assert summary["candidate_attachment_key"] == best
         chunk = mcp("get_item_fulltext", {"item_key": seed.alpha})
         assert chunk["attachment_key"] == best
-        print(
-            "two PDF best attachment:",
-            {"first": seed.pdf, "second": second, "picked": best, "content": chunk["content"]},
-        )
     finally:
         item = read_item(mcp, second)
         mcp("delete_item", {"item_key": second, "version": item["version"]})

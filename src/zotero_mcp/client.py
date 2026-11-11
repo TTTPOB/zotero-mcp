@@ -277,22 +277,26 @@ def _response_version(value: Any) -> int | None:
     return candidate if type(candidate) is int and candidate >= 0 else None
 
 
-def _stored_item_warnings(sent: dict[str, Any], stored: dict[str, Any]) -> list[str]:
+def _stored_item_warnings(
+    sent: dict[str, Any], stored: dict[str, Any], previous_extra: str = ""
+) -> list[str]:
     """Flag dropped fields and creator-role replacement, not routine normalization."""
     warnings = []
     item_type = stored.get("itemType", sent.get("itemType", "item"))
+    extra_changed = stored.get("extra", "") != sent.get("extra", previous_extra)
     for field, value in sent.items():
         if value in (None, "", [], {}) or field in stored:
             continue
         if value in stored.values():
             continue  # A base field may have been mapped to its item-type-specific name.
-        destination = (
-            "is absent from stored data; extra gained content"
-            if stored.get("extra") and stored.get("extra") != sent.get("extra", "")
-            else "was not stored under that field"
+        outcome = (
+            "Zotero stored the item without it and changed extra instead"
+            if extra_changed
+            else "Zotero did not store it"
         )
         warnings.append(
-            f"{field} on {item_type} {destination}; check get_item_schema before editing this field."
+            f"{field} is not a {item_type} field: {outcome}. "
+            "Check zotero_get_item_schema for valid fields."
         )
     for index, creator in enumerate(sent.get("creators", [])):
         saved_creators = stored.get("creators", [])
@@ -302,8 +306,8 @@ def _stored_item_warnings(sent: dict[str, Any], stored: dict[str, Any]) -> list[
         saved = saved_creators[index].get("creatorType")
         if original != saved:
             warnings.append(
-                f"creators[{index}].creatorType on {item_type} changed from {original} to {saved}; "
-                "check get_item_schema before editing creators."
+                f"creators[{index}].creatorType {original} is not valid for {item_type}: "
+                f"Zotero stored {saved}. Check zotero_get_item_schema for valid creator types."
             )
     return warnings
 
@@ -1724,7 +1728,9 @@ class Library:
         stored = self._update_item(payload)
         result = _single_write_result(payload["key"], _response_version(stored))
         if stored is not None:
-            warnings = _stored_item_warnings(changes, stored["data"])
+            warnings = _stored_item_warnings(
+                changes, stored["data"], current["data"].get("extra", "")
+            )
             if warnings:
                 result["results"][0]["warnings"] = warnings
         return result
