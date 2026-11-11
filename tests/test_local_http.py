@@ -123,7 +123,7 @@ def test_native_batch_partial_failure_is_preserved(wire):
     responses.insert(0, (200, [{"field": "title"}]))
     result = library.add_items([{"itemType": "book"}, {"itemType": "book", "title": "bad"}])
     assert result["ok"] is False
-    assert result["results"][1]["error"]["code"] == 400
+    assert result["results"][1]["error"]["code"] == "INVALID_ARGUMENT"
     assert [c.method for c in calls] == ["GET", "POST"]
 
 

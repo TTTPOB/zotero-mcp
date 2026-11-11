@@ -81,7 +81,7 @@ class WriteEntry(_WriteModel):
         description="Known local entity version; omitted when unavailable.",
     )
     stage: WriteStage | None = None
-    error: Any = None
+    error: ErrorPayload | None = None
 
 
 class WriteResult(_WriteModel):

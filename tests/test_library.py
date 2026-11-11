@@ -119,7 +119,7 @@ def test_partial_create_reports_both_outcomes(library, zot):
     result = library.add_items([{"itemType": "book"}, {"itemType": "note"}])
     assert result["ok"] is False
     assert result["results"][0]["key"] == "NEW00001"
-    assert result["results"][1]["error"]["code"] == 400
+    assert result["results"][1]["error"]["code"] == "INVALID_ARGUMENT"
     zot.create_items.assert_called_once()
 
 

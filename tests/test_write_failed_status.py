@@ -33,7 +33,7 @@ async def test_every_entry_failed_is_an_error_with_readable_results(library, zot
     assert result.structuredContent["ok"] is False
     assert result.structuredContent["status"] == "failed"
     assert [e["status"] for e in result.structuredContent["results"]] == ["failed", "failed"]
-    assert result.structuredContent["results"][0]["error"]["code"] == 400
+    assert result.structuredContent["results"][0]["error"]["code"] == "INVALID_ARGUMENT"
     assert json.loads(result.content[0].text) == result.structuredContent
 
 

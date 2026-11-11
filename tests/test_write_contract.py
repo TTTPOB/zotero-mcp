@@ -48,7 +48,22 @@ def test_write_result_retains_each_input_index_and_status():
     assert result["results"][0]["key"] == "NEW00001"
     assert result["results"][1]["key"] == "ABCD1234"
     assert result["results"][2]["key"] == "SECOND02"
-    assert result["results"][2]["error"]["code"] == 400
+    assert result["results"][2]["error"] == {
+        "code": "INVALID_ARGUMENT", "message": "bad field", "retryable": False,
+        "details": {"http_status": 400},
+    }
+
+
+def test_create_failures_map_http_status_without_inventing_keys():
+    result = write_result({"failed": {
+        "0": {"key": "", "code": 404, "message": "missing"},
+        "1": {"key": "", "code": 412, "message": "stale"},
+        "2": {"key": "", "code": 503, "message": "unavailable"},
+    }})
+    assert [entry["error"]["code"] for entry in result["results"]] == ["NOT_FOUND", "VERSION_CONFLICT", "UNKNOWN_ERROR"]
+    assert [entry["error"]["details"]["http_status"] for entry in result["results"]] == [404, 412, 503]
+    assert all("key" not in entry for entry in result["results"])
+    assert all(entry["error"]["retryable"] is False for entry in result["results"])
 
 
 def test_write_result_missing_inputs_are_unknown_and_preserve_success():

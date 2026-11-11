@@ -37,6 +37,7 @@ from zotero_mcp.errors import (
     KEY_FORMAT,
     NOT_CITABLE,
     NOT_FOUND,
+    UNKNOWN_ERROR,
     UNKNOWN_WRITE_RESULT,
     VERSION_CONFLICT,
     LibraryError,
@@ -378,7 +379,15 @@ def write_result(
             "status": status,
             **({"key": source_key or _response_key(value)} if source_key or _response_key(value) else {}),
         }
-        if status in {"failed", "unknown"}:
+        if status == "failed":
+            http_status = value["code"]
+            entry["error"] = {
+                "code": {400: INVALID_ARGUMENT, 404: NOT_FOUND, 412: VERSION_CONFLICT}.get(http_status, UNKNOWN_ERROR),
+                "message": value["message"],
+                "retryable": False,
+                "details": {"http_status": http_status},
+            }
+        elif status == "unknown":
             entry["error"] = value
         elif (version := _response_version(value)) is not None:
             entry["version"] = version

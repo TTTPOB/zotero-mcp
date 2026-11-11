@@ -46,6 +46,10 @@ def test_add_items_reports_invalid_entries(mcp):
     good, bad = result["results"]
     assert (good["input_index"], good["status"]) == (0, "success")
     assert (bad["input_index"], bad["status"]) == (1, "failed")
+    assert bad["error"]["code"] == "INVALID_ARGUMENT"
+    assert bad["error"]["details"]["http_status"] == 400
+    assert bad["error"]["retryable"] is False
+    assert "key" not in bad
     assert "nonsense" in bad["error"]["message"]
     assert read_item(mcp, good["key"])["data"]["title"] == "Live ok"
 
@@ -273,6 +277,10 @@ def test_batch_with_every_entry_failed_is_an_mcp_error(mcp):
     result = mcp("create_note", {"parent_key": "ZZZZZZZZ", "text": "orphan"}, error=True)
     assert result["ok"] is False and result["status"] == "failed"
     assert result["results"][0]["status"] == "failed"
+    assert result["results"][0]["error"]["code"] == "INVALID_ARGUMENT"
+    assert result["results"][0]["error"]["details"]["http_status"] == 400
+    assert "Parent item" in result["results"][0]["error"]["message"]
+    assert "key" not in result["results"][0]
 
     result = mcp("batch_update_tags", {"item_keys": ["ZZZZZZZZ"], "add": ["x"]}, error=True)
     assert result["status"] == "failed"
