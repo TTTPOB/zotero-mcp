@@ -177,7 +177,7 @@ def seed(library, tmp_path_factory):
     deadline = time.monotonic() + 60
     while True:
         try:
-            library.get_item_fulltext(alpha, attachment_key=pdf["attachment_key"])
+            library.get_item_fulltext(pdf["attachment_key"])
             break
         except LibraryError:
             if time.monotonic() > deadline:
