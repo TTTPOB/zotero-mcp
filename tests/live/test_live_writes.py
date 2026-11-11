@@ -138,12 +138,12 @@ def test_batch_update_tags_adds_and_removes_preserving_others(mcp, new_item):
     result = mcp(
         "batch_update_tags", {"item_keys": [first, second], "add": ["added"], "remove": ["drop"]}
     )
-    assert result["ok"] and sorted(result["updated"]) == sorted([first, second])
+    assert result["ok"] and sorted(entry["key"] for entry in result["results"] if entry["status"] == "success") == sorted([first, second])
     assert tag_names(mcp, first) == {"keep", "added"}
     assert tag_names(mcp, second) == {"added"}
 
     again = mcp("batch_update_tags", {"item_keys": [first], "add": ["added"]})
-    assert again["unchanged"] == [first]
+    assert again["results"][0]["status"] == "unchanged"
 
 
 def test_manage_collection_items_add_and_remove_top_level_items(mcp, new_item):
@@ -154,7 +154,7 @@ def test_manage_collection_items_add_and_remove_top_level_items(mcp, new_item):
         "manage_collection_items",
         {"collection_key": collection, "item_keys": [first, second], "action": "add"},
     )
-    assert added["ok"] and sorted(added["updated"]) == sorted([first, second])
+    assert added["ok"] and sorted(entry["key"] for entry in added["results"] if entry["status"] == "success") == sorted([first, second])
     assert set(keys(mcp("get_collection_items", {"collection_key": collection}))) == {
         first,
         second,
@@ -164,7 +164,7 @@ def test_manage_collection_items_add_and_remove_top_level_items(mcp, new_item):
         "manage_collection_items",
         {"collection_key": collection, "item_keys": [first], "action": "remove"},
     )
-    assert removed["updated"] == [first]
+    assert removed["results"][0]["key"] == first
     assert keys(mcp("get_collection_items", {"collection_key": collection})) == [second]
     # Removing membership never deletes the item.
     assert read_item(mcp, first)["key"] == first
@@ -175,8 +175,8 @@ def test_attach_file_stores_a_readable_copy(mcp, new_item, tmp_path):
     source = tmp_path / "attached.txt"
     source.write_text(f"{TEXT_NEEDLE} attached through MCP\n", encoding="utf-8")
     result = mcp("attach_file", {"parent_key": parent, "file_path": str(source), "title": "Mine"})
-    assert result["ok"] and result["stage"] == "upload"
-    attachment = result["attachment_key"]
+    assert result["ok"] and result["results"][0]["stage"] == "upload"
+    attachment = result["key"]
     metadata = read_item(mcp, attachment)
     assert metadata["parent_key"] == parent
     assert metadata["data"]["title"] == "Mine"
@@ -190,12 +190,12 @@ def test_attach_markdown_creates_once_and_never_duplicates(mcp, new_item):
     body = "# Title\n\nfirst body"
     created = mcp("attach_markdown", {"parent_key": parent, "content": body})
     assert created["ok"]
-    attachment = created["attachment_key"]
+    attachment = created["key"]
     assert mcp("read_attachment_text", {"attachment_key": attachment})["content"] == body
 
     same = mcp("attach_markdown", {"parent_key": parent, "content": body})
-    assert same["ok"] and same["attachment_key"] == attachment
-    assert same["unchanged"] == [attachment]
+    assert same["ok"] and same["key"] == attachment
+    assert same["results"][0]["status"] == "unchanged"
 
     different = mcp(
         "attach_markdown", {"parent_key": parent, "content": "# Title\n\nother"}, error=True

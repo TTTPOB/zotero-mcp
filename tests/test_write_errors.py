@@ -1,9 +1,8 @@
 """Contract errors of the item and collection write tools."""
 
-import copy
-
 import pytest
 from pyzotero import PreConditionFailedError, ResourceNotFoundError
+from write_support import item_versions
 
 from zotero_mcp.errors import NOT_FOUND, VERSION_CONFLICT, LibraryError
 
@@ -47,17 +46,6 @@ def test_delete_collection_on_a_missing_key_is_not_found(library, zot):
         library.delete_collection(MISSING, 7)
     assert caught.value.code == NOT_FOUND
     assert caught.value.details == {"operation": "delete_collection", "key": MISSING}
-
-
-def item_versions(item, *versions):
-    """zot.item answers with each version in turn (the last one repeats)."""
-    remaining = list(versions)
-
-    def read(item_key):
-        version = remaining.pop(0) if len(remaining) > 1 else remaining[0]
-        return {**copy.deepcopy(item), "key": item_key, "version": version}
-
-    return read
 
 
 def test_update_item_with_a_stale_version_reports_the_current_version(library, zot):
@@ -133,6 +121,6 @@ def test_batch_conflict_entry_carries_the_current_version(library, zot, item):
     zot.item.side_effect = item_versions(item, 7, 7, 9)
     zot.update_item.side_effect = PreConditionFailedError("item version mismatch")
     result = library.batch_update_tags(["ABCD1234"], add=["new"])
-    error = result["failed"]["ABCD1234"]
+    error = result["results"][0]["error"]
     assert error["code"] == VERSION_CONFLICT
     assert error["details"]["current_version"] == 9

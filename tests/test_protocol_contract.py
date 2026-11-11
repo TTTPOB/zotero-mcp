@@ -82,7 +82,12 @@ async def test_protocol_success_and_error_fit_write_output_schema(library, zot):
             "zotero_update_item",
             {"item_key": "bad", "version": 7, "changes": {"title": "new"}},
         )
-    assert tools["zotero_update_item"].outputSchema["required"] == ["ok"]
+    schema = tools["zotero_update_item"].outputSchema
+    assert schema["required"] == ["ok"]
+    assert set(schema["properties"]) == {"ok", "status", "results", "key", "version", "error"}
+    assert schema["additionalProperties"] is False
+    assert set(success.structuredContent) == {"ok", "status", "results", "key", "version"}
+    assert set(success.structuredContent["results"][0]) == {"input_index", "status", "key", "version"}
     assert success.isError is False
     assert success.structuredContent["ok"] is True
     assert json.loads(success.content[0].text) == success.structuredContent

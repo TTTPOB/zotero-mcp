@@ -123,7 +123,7 @@ def test_native_batch_partial_failure_is_preserved(wire):
     responses.insert(0, (200, [{"field": "title"}]))
     result = library.add_items([{"itemType": "book"}, {"itemType": "book", "title": "bad"}])
     assert result["ok"] is False
-    assert result["failed"]["1"]["code"] == 400
+    assert result["results"][1]["error"]["code"] == 400
     assert [c.method for c in calls] == ["GET", "POST"]
 
 
@@ -282,8 +282,8 @@ def test_attachment_upload_uses_local_receiver_and_registration(wire, monkeypatc
     monkeypatch.setattr(http, "post", upload)
     result = library.attach_file("ABCD1234", str(path))
     assert result["ok"] is True
-    assert result["attachment_key"] == "ATTACH01"
-    assert result["upload"]["success"][0]["version"] == 8
+    assert result["key"] == "ATTACH01"
+    assert "upload" not in result
     assert len(uploads) == 1
     assert calls[-1].url.path == "/api/users/0/items/ATTACH01/file"
     assert b"upload=registration-test" in calls[-1].content

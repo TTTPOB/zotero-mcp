@@ -169,23 +169,24 @@ def test_attach_markdown_overrides_os_mime_guess(guessed_type, library, zot, mon
 def test_attach_markdown_writes_fixed_temp_file_and_reuses_attach_file(library, zot):
     zot.children.return_value = []
     zot.everything.side_effect = lambda items: items
-    zot.upload_attachments.side_effect = lambda attachments, parentid=None, basedir=None: {
-        "success": [{"key": attachments[0]["key"]}],
-        "failure": [],
-        "unchanged": [],
-        "observed_exists": Path(basedir, attachments[0]["filename"]).is_file(),
-        "observed_content": Path(basedir, attachments[0]["filename"]).read_text(encoding="utf-8"),
-    }
+    observed = {}
+
+    def upload(attachments, parentid=None, basedir=None):
+        source = Path(basedir, attachments[0]["filename"])
+        observed["exists"] = source.is_file()
+        observed["content"] = source.read_text(encoding="utf-8")
+        return {"success": [{"key": attachments[0]["key"]}], "failure": [], "unchanged": []}
+
+    zot.upload_attachments.side_effect = upload
     content = "# Paper\n\n正文"
 
     result = library.attach_markdown("ABCD1234", content)
 
     assert result["ok"] is True
-    assert result["attachment_key"] == "NEW00001"
-    assert result["filename"] == "paper-chew-fulltext.md"
-    assert result["content_sha256"]
-    assert result["upload"]["observed_exists"] is True
-    assert result["upload"]["observed_content"] == content
+    assert result["key"] == "NEW00001"
+    assert "filename" not in result
+    assert "content_sha256" not in result
+    assert observed == {"exists": True, "content": content}
     metadata = zot.create_items.call_args.args[0][0]
     assert metadata["filename"] == "paper-chew-fulltext.md"
     assert metadata["contentType"] == "text/markdown"
@@ -201,8 +202,8 @@ def test_attach_markdown_same_content_is_unchanged_without_create(library, zot):
 
     assert result["ok"] is True
     assert result["status"] == "success"
-    assert result["attachment_key"] == "ATTACH01"
-    assert result["unchanged"] == ["ATTACH01"]
+    assert result["key"] == "ATTACH01"
+    assert result["results"][0]["status"] == "unchanged"
     zot.create_items.assert_not_called()
     zot.upload_attachments.assert_not_called()
 
@@ -217,7 +218,7 @@ def test_attach_markdown_different_content_is_conflict_without_create(library, z
     assert result["ok"] is False
     assert result["status"] == "failed"
     assert result["error"]["code"] == ATTACHMENT_CONTENT_CONFLICT
-    assert result["attachment_key"] == "ATTACH01"
+    assert result["key"] == "ATTACH01"
     zot.create_items.assert_not_called()
     zot.upload_attachments.assert_not_called()
 
@@ -244,7 +245,7 @@ def test_attach_markdown_unreadable_existing_attachment_does_not_duplicate(libra
 
     assert result["ok"] is False
     assert result["status"] == "unknown"
-    assert result["attachment_key"] == "ATTACH01"
+    assert result["key"] == "ATTACH01"
     assert result["error"]["code"] == "ATTACHMENT_CONTENT_UNAVAILABLE"
     zot.create_items.assert_not_called()
     zot.upload_attachments.assert_not_called()
@@ -259,6 +260,6 @@ def test_attach_markdown_upload_unknown_keeps_created_key(library, zot):
 
     assert result["ok"] is False
     assert result["status"] == "unknown"
-    assert result["attachment_key"] == "NEW00001"
-    assert result["stage"] == "upload"
+    assert result["key"] == "NEW00001"
+    assert result["results"][0]["stage"] == "upload"
     assert result["error"]["code"] == "UNKNOWN_WRITE_RESULT"

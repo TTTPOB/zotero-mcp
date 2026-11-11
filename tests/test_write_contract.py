@@ -48,14 +48,14 @@ def test_write_result_retains_each_input_index_and_status():
     assert result["results"][0]["key"] == "NEW00001"
     assert result["results"][1]["key"] == "ABCD1234"
     assert result["results"][2]["key"] == "SECOND02"
-    assert result["failed"]["2"]["code"] == 400
+    assert result["results"][2]["error"]["code"] == 400
 
 
 def test_write_result_missing_inputs_are_unknown_and_preserve_success():
     result = write_result({"success": {"0": "NEW00001"}}, input_count=3)
     assert result["ok"] is False
     assert result["status"] == "unknown"
-    assert result["success"] == {"0": "NEW00001"}
+    assert result["results"][0]["key"] == "NEW00001"
     assert [entry["status"] for entry in result["results"]] == [
         "success",
         "unknown",
@@ -112,7 +112,7 @@ def test_batch_result_keeps_updated_failed_and_pending_entries(library, zot):
         "pending",
     ]
     assert result["results"][1]["error"]["code"] == VERSION_CONFLICT
-    assert result["pending"] == ["THIRD003"]
+    assert result["results"][2] == {"input_index": 2, "key": "THIRD003", "status": "pending"}
 
 
 def test_no_index_message_is_not_duplicated():

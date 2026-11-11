@@ -17,9 +17,9 @@ def test_attachment_upload_success_list_does_not_collide_with_write_schema(libra
     result = library.attach_file("ABCD1234", str(path))
     assert result["ok"] is True
     assert result["status"] == "success"
-    assert result["attachment_key"] == "NEW00001"
+    assert result["key"] == "NEW00001"
     assert result["results"][0]["status"] == "success"
-    assert result["upload"]["success"] == [{"key": "NEW00001"}]
+    assert "upload" not in result
 
 
 async def test_protocol_attachment_upload_success_list_is_schema_compatible(library, zot, tmp_path):
@@ -38,8 +38,8 @@ async def test_protocol_attachment_upload_success_list_is_schema_compatible(libr
             {"parent_key": "ABCD1234", "file_path": str(path)},
         )
     assert result.isError is False
-    assert result.structuredContent["attachment_key"] == "NEW00001"
-    assert result.structuredContent["upload"]["success"] == [{"key": "NEW00001"}]
+    assert result.structuredContent["key"] == "NEW00001"
+    assert "upload" not in result.structuredContent
     assert json.loads(result.content[0].text) == result.structuredContent
 
 
@@ -58,8 +58,8 @@ async def test_protocol_attachment_upload_none_is_unknown_with_key_and_stage(
         )
     assert result.isError is True
     assert result.structuredContent["status"] == "unknown"
-    assert result.structuredContent["attachment_key"] == "NEW00001"
-    assert result.structuredContent["stage"] == "upload"
+    assert result.structuredContent["key"] == "NEW00001"
+    assert result.structuredContent["results"][0]["stage"] == "upload"
     assert result.structuredContent["error"]["code"] == "UNKNOWN_WRITE_RESULT"
     assert result.structuredContent["error"]["retryable"] is False
     assert json.loads(result.content[0].text) == result.structuredContent
@@ -76,7 +76,7 @@ async def test_protocol_add_missing_batch_result_is_unknown_but_keeps_success(li
         )
     assert result.isError is True
     assert result.structuredContent["status"] == "unknown"
-    assert result.structuredContent["success"] == {"0": "NEW00001"}
+    assert result.structuredContent["results"][0]["key"] == "NEW00001"
     assert result.structuredContent["results"][1]["status"] == "unknown"
     assert result.structuredContent["error"]["code"] == "UNKNOWN_WRITE_RESULT"
     assert json.loads(result.content[0].text) == result.structuredContent
@@ -91,8 +91,8 @@ def test_interrupted_batch_marks_only_current_item_unknown(library, zot):
         "unknown",
         "pending",
     ]
-    assert result["unknown"]["SECOND02"]["code"] == "UNKNOWN_WRITE_RESULT"
-    assert result["pending"] == ["THIRD003"]
+    assert result["results"][1]["error"]["code"] == "UNKNOWN_WRITE_RESULT"
+    assert result["results"][2] == {"input_index": 2, "key": "THIRD003", "status": "pending"}
 
 
 async def test_protocol_interrupted_batch_is_error_with_completed_entries(library, zot):
@@ -111,8 +111,8 @@ async def test_protocol_interrupted_batch_is_error_with_completed_entries(librar
         "unknown",
         "pending",
     ]
-    assert result.structuredContent["unknown"]["SECOND02"]["code"] == "UNKNOWN_WRITE_RESULT"
-    assert result.structuredContent["pending"] == ["THIRD003"]
+    assert result.structuredContent["results"][1]["error"]["code"] == "UNKNOWN_WRITE_RESULT"
+    assert result.structuredContent["results"][2]["key"] == "THIRD003"
     assert json.loads(result.content[0].text) == result.structuredContent
 
 
@@ -139,8 +139,8 @@ def test_attachment_upload_empty_mapping_is_unknown_with_key(library, zot, tmp_p
     result = library.attach_file("ABCD1234", str(path))
     assert result["ok"] is False
     assert result["status"] == "unknown"
-    assert result["attachment_key"] == "NEW00001"
-    assert result["stage"] == "upload"
+    assert result["key"] == "NEW00001"
+    assert result["results"][0]["stage"] == "upload"
     assert result["error"]["code"] == "UNKNOWN_WRITE_RESULT"
 
 
@@ -151,8 +151,8 @@ def test_attachment_upload_disconnect_keeps_key_and_unknown_details(library, zot
     result = library.attach_file("ABCD1234", str(path))
     assert result["ok"] is False
     assert result["status"] == "unknown"
-    assert result["attachment_key"] == "NEW00001"
-    assert result["stage"] == "upload"
+    assert result["key"] == "NEW00001"
+    assert result["results"][0]["stage"] == "upload"
     assert result["error"]["code"] == "UNKNOWN_WRITE_RESULT"
     assert result["error"]["retryable"] is False
-    assert "Inspect" in result["error_message"]
+    assert "inspect" in result["error"]["message"]
