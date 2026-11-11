@@ -1,6 +1,6 @@
 # ADR 0005：全文工具按 key 类型和索引状态给出可自救的错误
 
-- 状态：已采纳
+- 状态：已采纳（决策 1 的“参数名不变”由 ADR 0009 取代；其余决定继续有效）
 - 决策者：Agent（人类于 2026-11-09 授权修复此问题，具体方案由 Agent 决定）
 - 日期：2026-11-09
 - 涉及：`src/zotero_mcp/client.py`（`get_item_fulltext`、`find_item_fulltext`）、`src/zotero_mcp/fulltext.py`、`src/zotero_mcp/fulltext_models.py`
