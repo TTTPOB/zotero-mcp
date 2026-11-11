@@ -108,6 +108,17 @@ def test_metadata_is_semantic_and_raw_is_unchanged(library, zot):
     assert "links" not in metadata
 
 
+def test_collections_default_to_compact_projection_and_raw_is_unchanged(library, zot):
+    root = {"key": "COLL0001", "version": 3, "data": {"name": "Reading", "parentCollection": False}, "meta": {"numItems": 4}, "links": {}}
+    child = {"key": "COLL0002", "version": 5, "data": {"name": "Child", "parentCollection": "COLL0001"}, "meta": {"numItems": 0}}
+    zot.collections.return_value = [root, child]
+    assert library.get_collections()["items"] == [
+        {"key": "COLL0001", "version": 3, "name": "Reading", "item_count": 4},
+        {"key": "COLL0002", "version": 5, "name": "Child", "parent_key": "COLL0001", "item_count": 0},
+    ]
+    assert library.get_collections(view="raw")["items"] == [root, child]
+
+
 def test_collection_items_lists_only_top_level_items(library, zot):
     paper = _native_item("PAPER001", title="Paper")
     standalone_note = _native_item("NOTE0002", item_type="note")

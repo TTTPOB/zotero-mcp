@@ -872,9 +872,34 @@ class Library:
         return self._page(children, limit, offset, view=view)
 
     @operation()
-    def get_collections(self, limit: ReadLimit = 25, offset: ReadOffset = 0) -> ItemPage:
-        """List collections with keys, parentCollection and local versions."""
-        return self._page(self.zot.collections(**pagination(limit, offset)), limit, offset)
+    def get_collections(
+        self,
+        limit: ReadLimit = 25,
+        offset: ReadOffset = 0,
+        view: Annotated[
+            Literal["summary", "raw"],
+            Field(description="Compact collection summary, or native Zotero raw records."),
+        ] = "summary",
+    ) -> ItemPage:
+        """List collections with keys, versions, names and item counts by default."""
+        if view not in {"summary", "raw"}:
+            raise ValueError("view must be one of: summary, raw.")
+        result = self._page(self.zot.collections(**pagination(limit, offset)), limit, offset)
+        if view == "summary":
+            summaries = []
+            for collection in result["items"]:
+                data = collection.get("data", {})
+                summary = {
+                    "key": collection["key"],
+                    "version": collection["version"],
+                    "name": data.get("name", ""),
+                    "item_count": collection.get("meta", {}).get("numItems"),
+                }
+                if data.get("parentCollection"):
+                    summary["parent_key"] = data["parentCollection"]
+                summaries.append(summary)
+            result["items"] = summaries
+        return result
 
     @operation()
     def get_collection_items(
