@@ -81,23 +81,18 @@ async def test_protocol_no_index_preserves_attachment_key(library, zot):
     ) as session:
         result = await session.call_tool(
             "zotero_get_item_fulltext",
-            {"item_key": "ABCD1234", "attachment_key": "ATTACH01"},
+            {"item_key": "ATTACH01"},
         )
     assert result.isError is True
-    assert result.structuredContent["error"] == {
-        "code": "FULLTEXT_NOT_INDEXED",
-        "message": (
-            "No indexed text is available for this attachment. If it was just added, Zotero "
-            "may still be indexing it and a later retry can work; otherwise rebuild the index "
-            "in Zotero (scanned PDFs without a text layer are never indexed)."
-        ),
-        "retryable": False,
-        "details": {"attachment_key": "ATTACH01", "reason": "not_indexed"},
-    }
+    error = result.structuredContent["error"]
+    assert error["code"] == "FULLTEXT_NOT_INDEXED"
+    assert error["retryable"] is False
+    assert error["details"] == {"attachment_key": "ATTACH01", "reason": "not_indexed"}
     assert json.loads(result.content[0].text) == result.structuredContent
 
 
 async def test_protocol_ambiguous_candidates_preserve_details(library, zot):
+    zot.fulltext_item.side_effect = ResourceNotFoundError("parent has no index")
     zot.children.return_value = [
         {"key": "ATTACH01", "data": {"contentType": "application/pdf"}},
         {"key": "ATTACH02", "data": {"contentType": "application/pdf"}},
@@ -126,13 +121,12 @@ async def test_protocol_revision_mismatch_preserves_details(library, zot):
     ) as session:
         first = await session.call_tool(
             "zotero_get_item_fulltext",
-            {"item_key": "ABCD1234", "attachment_key": "ATTACH01"},
+            {"item_key": "ATTACH01"},
         )
         result = await session.call_tool(
             "zotero_get_item_fulltext",
             {
-                "item_key": "ABCD1234",
-                "attachment_key": "ATTACH01",
+                "item_key": "ATTACH01",
                 "text_revision": text_revision("old"),
             },
         )

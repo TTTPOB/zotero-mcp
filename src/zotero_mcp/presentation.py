@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import copy
+import html
 import re
 from collections.abc import Mapping, Sequence
 from typing import Annotated, Any, Literal
-from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer
+
+from zotero_mcp.fulltext import preferred_attachment_key
 
 ReadView = Literal["summary", "metadata", "raw"]
 ReadItemKey = Annotated[
@@ -56,18 +58,20 @@ class _FieldsSetModel(BaseModel):
         return result
 
 
-class FulltextEntry(_FieldsSetModel):
-    """A lightweight route to Zotero's fulltext reader."""
+class ParentContext(_FieldsSetModel):
+    """Enough of a parent item to recognise the paper behind a child hit."""
 
-    read_key: str | None = None
-    candidate_attachment_key: str | None = None
-    index_state: Literal["unknown"] | None = None
+    title: str | None = None
+    creator_summary: str | None = None
+    year: int | None = None
 
 
 class ItemSummary(_FieldsSetModel):
     """Stable discovery fields shared by search and list views."""
 
-    key: str | None = None
+    key: str | None = Field(
+        default=None, description="Pass this key as item_key to fulltext tools."
+    )
     version: int | None = None
     item_type: str | None = None
     title: str | None = None
@@ -75,9 +79,12 @@ class ItemSummary(_FieldsSetModel):
     creator_summary: str | None = None
     doi: str | None = None
     parent_key: str | None = None
-    matched_attachment_key: str | None = None
-    match_details_available: bool | None = None
-    fulltext: FulltextEntry | None = None
+    candidate_attachment_key: str | None = Field(
+        default=None, description="Zotero's best attachment for this paper, when it has one."
+    )
+    parent: ParentContext | None = Field(
+        default=None, description="The paper a child search hit belongs to."
+    )
 
 
 class ItemMetadata(_FieldsSetModel):
@@ -133,7 +140,6 @@ class TagPage(_FieldsSetModel):
 
 _VALID_VIEWS = {"summary", "metadata", "raw"}
 _YEAR_RE = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
-_ENCLOSURE_KEY_RE = re.compile(r"/items/([A-Za-z0-9]{8})(?:/|$)")
 
 
 def normalize_view(view: str) -> ReadView:
@@ -150,17 +156,6 @@ def _data(item: Mapping[str, Any]) -> Mapping[str, Any]:
 def _parent_key(data: Mapping[str, Any]) -> str | None:
     parent = data.get("parentItem")
     return parent if isinstance(parent, str) and parent else None
-
-
-def _enclosure_key(item: Mapping[str, Any]) -> str | None:
-    links = item.get("links")
-    enclosure = links.get("enclosure") if isinstance(links, Mapping) else None
-    href = enclosure.get("href") if isinstance(enclosure, Mapping) else enclosure
-    if not isinstance(href, str):
-        return None
-    path = urlparse(href).path
-    matches = _ENCLOSURE_KEY_RE.findall(path)
-    return matches[-1].upper() if matches else None
 
 
 def _year(data: Mapping[str, Any]) -> int | None:
@@ -203,7 +198,7 @@ def _doi(data: Mapping[str, Any]) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _summary(item: Mapping[str, Any], *, search: bool) -> dict[str, Any]:
+def _summary(item: Mapping[str, Any]) -> dict[str, Any]:
     data = _data(item)
     item_key = item.get("key")
     item_key = item_key if isinstance(item_key, str) else None
@@ -213,26 +208,26 @@ def _summary(item: Mapping[str, Any], *, search: bool) -> dict[str, Any]:
     title = data.get("title")
     if not isinstance(title, str):
         title = data.get("filename") if isinstance(data.get("filename"), str) else ""
-    fulltext: dict[str, Any] = {"read_key": item_key or "", "index_state": "unknown"}
-    candidate_key = item_key if item_type == "attachment" else _enclosure_key(item)
-    if candidate_key:
-        fulltext["candidate_attachment_key"] = candidate_key
+    if item_type == "note":
+        note = re.sub(r"(?i)<(?:br\s*/?|/?(?:p|div|h[1-6]|li))\b[^>]*>", "\n", data.get("note", ""))
+        text = html.unescape(re.sub(r"<[^>]*>", "", note))
+        title = next((line.strip()[:120] for line in text.splitlines() if line.strip()), "")
     result: dict[str, Any] = {
         "key": item_key,
         "version": item.get("version") if isinstance(item.get("version"), int) else None,
         "item_type": item_type,
         "title": title,
+    }
+    optional = {
         "year": _year(data),
         "creator_summary": _creator_summary(data),
         "doi": _doi(data),
         "parent_key": parent_key,
-        "fulltext": fulltext,
+        "candidate_attachment_key": preferred_attachment_key(item),
     }
-    if search:
-        result.update(
-            matched_attachment_key=item_key if item_type == "attachment" else None,
-            match_details_available=False,
-        )
+    result.update(
+        {name: value for name, value in optional.items() if value is not None and value != ""}
+    )
     return result
 
 
@@ -249,20 +244,18 @@ def _metadata(item: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def project_item(
-    item: Mapping[str, Any], view: ReadView = "summary", *, search: bool = False
-) -> dict[str, Any]:
+def project_item(item: Mapping[str, Any], view: ReadView = "summary") -> dict[str, Any]:
     """Project one native Zotero item without mutating the source object."""
     view = normalize_view(view)
     if view == "raw":
         return copy.deepcopy(dict(item))
     if view == "metadata":
         return _metadata(item)
-    return _summary(item, search=search)
+    return _summary(item)
 
 
 def project_items(
-    items: Sequence[Mapping[str, Any]], view: ReadView = "summary", *, search: bool = False
+    items: Sequence[Mapping[str, Any]], view: ReadView = "summary"
 ) -> list[dict[str, Any]]:
     """Project items while preserving the upstream order and item count."""
-    return [project_item(item, view, search=search) for item in items]
+    return [project_item(item, view) for item in items]

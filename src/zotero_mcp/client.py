@@ -62,7 +62,6 @@ from zotero_mcp.fulltext_models import (
     FulltextAttachmentKey,
     FulltextChunk,
     FulltextContextCharacters,
-    FulltextFindKey,
     FulltextFindResult,
     FulltextItemKey,
     FulltextMaxCharacters,
@@ -197,11 +196,10 @@ def page(
     consumed_count: int | None = None,
     links: Mapping[str, Any] | None = None,
     headers: Mapping[str, Any] | None = None,
-    search: bool = False,
 ) -> ItemPage:
     """Build a projected page using native response pagination when available."""
     normalize_view(view)
-    projected = project_items(items, view, search=search)
+    projected = project_items(items, view)
     upstream_count = len(items) if consumed_count is None else consumed_count
     if type(upstream_count) is not int or upstream_count < 0:
         raise ValueError("consumed_count must be a nonnegative integer.")
@@ -610,7 +608,6 @@ class Library:
         *,
         view: ReadView = "raw",
         consumed_count: int | None = None,
-        search: bool = False,
     ) -> ItemPage:
         normalize_view(view)
         request = getattr(self.zot, "request", None)
@@ -622,7 +619,6 @@ class Library:
             consumed_count=consumed_count,
             links=getattr(self.zot, "links", None),
             headers=getattr(request, "headers", None),
-            search=search,
         )
 
     @operation()
@@ -677,7 +673,7 @@ class Library:
         historical ``-attachment`` default. ``matched_item`` applies tags to the
         native hit; ``parent`` applies them to its parent when it has one; ``either``
         accepts either level. Attachment hits are not deduplicated into parent items.
-        Their summary includes ``matched_attachment_key`` and ``parent_key``.
+        Their summary includes ``parent_key`` and the parent's title, creators and year.
         Identifier lookup: when the whole query is one DOI (bare, ``doi:`` prefix,
         or a doi.org URL; case-insensitive) or one ISBN-10/13 (hyphens and spaces
         optional; the ISBN-10 and ISBN-13 forms of one book both match), only
@@ -737,18 +733,23 @@ class Library:
             if isinstance(getattr(search_request, "headers", None), Mapping)
             else None
         )
+        parent_keys = {
+            key(item["data"]["parentItem"])
+            for item in native_items
+            if item.get("data", {}).get("parentItem")
+        }
+        parents = (
+            self._lookup_items(sorted(parent_keys))
+            if parent_keys and (view == "summary" or (tags and tag_scope != "matched_item"))
+            else {}
+        )
         filtered_items = native_items
         if tags and tag_scope != "matched_item":
             filtered_items = []
             for item in native_items:
                 data = item.get("data", {}) if isinstance(item, Mapping) else {}
-                parent_item = None
                 parent = data.get("parentItem") if isinstance(data, Mapping) else None
-                if isinstance(parent, str) and parent:
-                    try:
-                        parent_item = self.zot.item(key(parent))
-                    except ResourceNotFoundError:
-                        parent_item = None
+                parent_item = parents.get(key(parent)) if parent else None
                 parent_item = parent_item or item
                 item_match = _tags_match(item, tags)
                 parent_match = _tags_match(parent_item, tags)
@@ -756,7 +757,7 @@ class Library:
                     tag_scope == "either" and (item_match or parent_match)
                 ):
                     filtered_items.append(item)
-        return page(
+        result = page(
             filtered_items,
             limit,
             offset,
@@ -764,8 +765,18 @@ class Library:
             consumed_count=len(native_items),
             links=search_links,
             headers=search_headers,
-            search=True,
         )
+        if view == "summary":
+            for summary in result["items"]:
+                parent = parents.get(summary.get("parent_key"))
+                if parent is not None:
+                    parent_summary = project_items([parent])[0]
+                    summary["parent"] = {
+                        field: parent_summary[field]
+                        for field in ("title", "creator_summary", "year")
+                        if parent_summary.get(field) is not None and parent_summary[field] != ""
+                    }
+        return result
 
     def _lookup_identifier(
         self,
@@ -817,7 +828,6 @@ class Library:
             offset,
             view=view,
             headers={"Total-Results": len(matches)},
-            search=True,
         )
         lookup: dict[str, Any] = {
             "type": identifier.kind,
@@ -930,9 +940,34 @@ class Library:
         return self._page(children, limit, offset, view=view)
 
     @operation()
-    def get_collections(self, limit: ReadLimit = 25, offset: ReadOffset = 0) -> ItemPage:
-        """List collections with keys, parentCollection and local versions."""
-        return self._page(self.zot.collections(**pagination(limit, offset)), limit, offset)
+    def get_collections(
+        self,
+        limit: ReadLimit = 25,
+        offset: ReadOffset = 0,
+        view: Annotated[
+            Literal["summary", "raw"],
+            Field(description="Compact collection summary, or native Zotero raw records."),
+        ] = "summary",
+    ) -> ItemPage:
+        """List collections with keys, versions, names and item counts by default."""
+        if view not in {"summary", "raw"}:
+            raise ValueError("view must be one of: summary, raw.")
+        result = self._page(self.zot.collections(**pagination(limit, offset)), limit, offset)
+        if view == "summary":
+            summaries = []
+            for collection in result["items"]:
+                data = collection.get("data", {})
+                summary = {
+                    "key": collection["key"],
+                    "version": collection["version"],
+                    "name": data.get("name", ""),
+                    "item_count": collection.get("meta", {}).get("numItems"),
+                }
+                if data.get("parentCollection"):
+                    summary["parent_key"] = data["parentCollection"]
+                summaries.append(summary)
+            result["items"] = summaries
+        return result
 
     @operation()
     def get_collection_items(
@@ -952,7 +987,7 @@ class Library:
         Child attachments and notes are not listed (Zotero's non-top endpoint would
         add the children of every member, taking up pages and the total). Standalone
         attachments and notes are top-level and still appear. Use get_item_children
-        for a paper's children; a summary's fulltext.candidate_attachment_key names
+        for a paper's children; a summary's candidate_attachment_key names
         its best attachment. Request metadata or raw when needed.
         """
         collection = key(collection_key)
@@ -1288,12 +1323,10 @@ class Library:
             preferred_attachment_key=preferred_attachment_key(item),
         )
 
-    def _read_indexed_attachment(
-        self, key_: str, *, resolve_parent: bool = False
-    ) -> tuple[str, str, dict[str, Any]]:
+    def _read_indexed_attachment(self, key_: str) -> tuple[str, str, dict[str, Any]]:
         """Read indexed text; return (attachment_key, content, index response).
 
-        With resolve_parent, a parent item key is accepted and mapped to one of its
+        A parent item key is accepted and mapped to one of its
         attachments by the same rules as get_item_fulltext. The common case (a real
         attachment key) costs one request; the item is fetched only after a miss.
         """
@@ -1305,13 +1338,6 @@ class Library:
         if isinstance(data, Mapping) and data.get("itemType") == "attachment":
             raise unindexed_attachment_error(key_, item)
         self._reject_non_text_item(key_, item)
-        if not resolve_parent:
-            raise LibraryError(
-                INVALID_ARGUMENT,
-                "This key is a parent item, not an attachment. Pass it as item_key, or "
-                "pass one of its attachment keys.",
-                details={"key": key_, "kind": "parent_item"},
-            )
         selected = self._select_fulltext_attachment(key_, item)
         selected_key = key(selected["key"])
         indexed = self._fetch_index(selected_key)
@@ -1340,36 +1366,20 @@ class Library:
         item_key: FulltextItemKey,
         offset: FulltextOffset = 0,
         max_characters: FulltextMaxCharacters = 20000,
-        attachment_key: Annotated[
-            FulltextAttachmentKey | None,
-            Field(
-                description="Explicit attachment key to resolve selection; reuse the returned key for later chunks."
-            ),
-        ] = None,
         text_revision: FulltextRevision = None,
     ) -> FulltextChunk:
         """Read Zotero-indexed text from one stable attachment.
 
-        Pass a parent item key to select a sole attachment or a sole PDF. If the
-        parent has multiple plausible attachments, provide ``attachment_key`` from
-        the returned candidate list. Offsets are zero-based Unicode code points;
-        ``text_revision`` must be reused for subsequent chunks.
+        Pass a paper or attachment key as item_key. A paper uses Zotero's best
+        attachment, then a sole attachment or sole PDF. If selection is ambiguous,
+        pass one of the candidates' attachment_key as item_key. For later chunks,
+        pass the returned attachment_key as item_key and reuse text_revision.
+        Offsets are zero-based Unicode code points.
         """
         pagination(1, offset)
         if type(max_characters) is not int or not 1 <= max_characters <= 50000:
             raise ValueError("max_characters must be between 1 and 50000.")
-        item_key = key(item_key)
-        if attachment_key is not None:
-            selected_key = key(attachment_key)
-        else:
-            item = self._fulltext_lookup(item_key)
-            if item.get("data", {}).get("itemType") == "attachment":
-                selected_key = item_key
-            else:
-                self._reject_non_text_item(item_key, item)
-                selected_key = key(self._select_fulltext_attachment(item_key, item)["key"])
-
-        _, content, response = self._read_indexed_attachment(selected_key)
+        selected_key, content, response = self._read_indexed_attachment(key(item_key))
         self._check_text_revision(content, text_revision, attachment_key=selected_key)
         return make_chunk(
             attachment_key=selected_key,
@@ -1382,7 +1392,7 @@ class Library:
     @operation()
     def find_item_fulltext(
         self,
-        attachment_key: FulltextFindKey,
+        item_key: FulltextItemKey,
         query: FulltextQuery,
         context_characters: FulltextContextCharacters = 120,
         max_matches: FulltextMaxMatches = 20,
@@ -1395,16 +1405,14 @@ class Library:
         unmodified Zotero index text. This does not search parent items or the
         whole library, and does not use regular expressions.
         """
-        attachment_key = key(attachment_key)
+        item_key = key(item_key)
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query must contain non-whitespace text.")
         if type(context_characters) is not int or not 0 <= context_characters <= 5000:
             raise ValueError("context_characters must be between 0 and 5000.")
         if type(max_matches) is not int or not 1 <= max_matches <= 100:
             raise ValueError("max_matches must be between 1 and 100.")
-        attachment_key, content, response = self._read_indexed_attachment(
-            attachment_key, resolve_parent=True
-        )
+        attachment_key, content, response = self._read_indexed_attachment(item_key)
         self._check_text_revision(content, text_revision, attachment_key=attachment_key)
         return make_find_result(
             attachment_key=attachment_key,

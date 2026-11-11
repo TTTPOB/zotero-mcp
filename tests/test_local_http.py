@@ -211,7 +211,7 @@ def test_parent_tag_search_preserves_search_pagination_headers(wire):
                     "Link": '<http://localhost:23119/api/users/0/items?start=3&limit=1>; rel="next"',
                 },
             ),
-            (200, parent, {"Total-Results": "1"}),
+            (200, [parent], {"Total-Results": "1"}),
         ]
     )
 
@@ -224,7 +224,8 @@ def test_parent_tag_search_preserves_search_pagination_headers(wire):
     assert len(result["items"]) == 1
     assert calls[0].url.path == "/api/users/0/items"
     assert "tag" not in calls[0].url.params
-    assert calls[1].url.path == "/api/users/0/items/PARENT01"
+    assert calls[1].url.path == "/api/users/0/items"
+    assert calls[1].url.params["itemKey"] == "PARENT01"
 
 
 def test_parent_response_without_pagination_headers_keeps_search_total(wire):
@@ -242,7 +243,7 @@ def test_parent_response_without_pagination_headers_keeps_search_total(wire):
     responses.extend(
         [
             (200, [attachment], {"Total-Results": "2"}),
-            (200, parent),
+            (200, [parent]),
         ]
     )
 

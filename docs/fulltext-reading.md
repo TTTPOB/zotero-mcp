@@ -4,13 +4,13 @@
 
 ## 选择附件
 
-可以传入父文献的 `item_key`，也可以显式传入 `attachment_key`。`find_item_fulltext` 的 `attachment_key` 同样接受父文献 key，使用与本节相同的选择规则（共用同一段代码），成功结果中的 `attachment_key` 是实际选中的附件；候选有歧义时同样返回 `FULLTEXT_ATTACHMENT_AMBIGUOUS`。
+`get_item_fulltext` 和 `find_item_fulltext` 都只有一个 key 参数：`item_key`。它接受论文或附件 key，并共用同一段解析与选择代码。成功结果中的 `attachment_key` 是实际读到的附件；续读时把这个值作为下一次的 `item_key`。`get_item_fulltext` 不接受额外的 `attachment_key` 参数。
 
-- 显式 `attachment_key` 优先，适合补充材料、不同版本或连续阅读。
-- 如果父条目的 `links.enclosure` 已包含附件 key，且该 key 严格匹配子附件候选，使用该附件作为首选。这里只解析已有链接，不请求其 URL。
+- `item_key` 是附件 key 时直接读取该附件，适合补充材料、不同版本或连续阅读。
+- 父文献从 `links.attachment.href` 取得 Zotero 的最佳附件 key；只有该 key 确实是子附件候选时才优先使用。这里只解析已有链接，不请求其 URL。
 - 父文献只有一个子附件时，使用该附件。
 - 父文献有多个附件但只有一个 `application/pdf` 时，使用这个 PDF。
-- 多个 PDF，或多个非 PDF 且没有唯一首选时，不会逐个试读后静默替换。工具返回 `FULLTEXT_ATTACHMENT_AMBIGUOUS`，错误详情只包含最多 5 个小型候选摘要。根据候选的 `attachment_key` 再次显式调用。
+- 多个 PDF，或多个非 PDF 且没有唯一首选时，不会逐个试读后静默替换。工具返回 `FULLTEXT_ATTACHMENT_AMBIGUOUS`，错误详情只包含最多 5 个小型候选摘要。把候选的 `attachment_key` 作为 `item_key` 再次调用。
 - 候选的 `index_state` 是 `unknown`。附件存在、附件是 PDF、索引可读是三个不同状态；只有实际读取成功才能确认有文本。
 
 成功结果中的 `attachment_key` 是本次实际读取的附件。不要在后续分页中重新让父文献自动选择附件。
@@ -30,8 +30,7 @@
 
 ```json
 {
-  "item_key": "ABCD1234",
-  "attachment_key": "PDF00001",
+  "item_key": "PDF00001",
   "offset": 20000,
   "max_characters": 20000,
   "text_revision": "sha256:..."
@@ -61,7 +60,7 @@
 
 ```json
 {
-  "attachment_key": "PDF00001",
+  "item_key": "PDF00001",
   "query": "mitochondrial",
   "context_characters": 120,
   "max_matches": 20

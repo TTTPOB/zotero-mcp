@@ -130,14 +130,14 @@ def test_native_collection_create_version_and_collection_lifecycle(mcp):
         return {c["key"]: c for c in mcp("get_collections", {"limit": 100})["items"]}[key]
 
     assert created["version"] == created["results"][0]["version"] == collection(root)["version"]
-    assert collection(sub)["data"]["parentCollection"] == root
+    assert collection(sub)["parent_key"] == root
 
     mcp(
         "update_collection",
         {"collection_key": sub, "version": collection(sub)["version"], "name": "Live renamed"},
     )
-    assert collection(sub)["data"]["name"] == "Live renamed"
-    assert collection(sub)["data"]["parentCollection"] == root
+    assert collection(sub)["name"] == "Live renamed"
+    assert collection(sub)["parent_key"] == root
 
     mcp(
         "update_collection",

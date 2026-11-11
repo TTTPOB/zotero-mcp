@@ -104,20 +104,10 @@ def test_get_fulltext_rejects_a_note_given_as_attachment_key(library, zot):
     zot.item.side_effect = lambda key: {"key": key, "data": {"itemType": "note"}}
 
     with pytest.raises(LibraryError) as caught:
-        library.get_item_fulltext("ABCD1234", attachment_key="NOTE0001")
+        library.get_item_fulltext("NOTE0001")
 
     assert caught.value.code == "INVALID_ARGUMENT"
     assert caught.value.details["item_type"] == "note"
-
-
-def test_get_fulltext_rejects_a_parent_key_given_as_attachment_key(library, zot):
-    zot.fulltext_item.side_effect = ResourceNotFoundError("no index")
-
-    with pytest.raises(LibraryError) as caught:
-        library.get_item_fulltext("ABCD1234", attachment_key="PARENT01")
-
-    assert caught.value.code == "INVALID_ARGUMENT"
-    assert caught.value.details == {"key": "PARENT01", "kind": "parent_item"}
 
 
 @pytest.mark.parametrize("tool", ["get", "find"])
@@ -153,6 +143,7 @@ def test_collection_key_is_named_as_a_collection(library, zot, tool):
 
 
 def test_parent_without_attachments_does_not_ask_for_indexing(library, zot):
+    zot.fulltext_item.side_effect = ResourceNotFoundError("parent has no index")
     with pytest.raises(FulltextError) as caught:
         library.get_item_fulltext("ABCD1234")
 

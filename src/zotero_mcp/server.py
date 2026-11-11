@@ -142,9 +142,9 @@ Tools for the user's local Zotero library. Which tool to use:
 ISBN as the whole query for an exact identifier lookup (found=false means the library lacks it).
 - Cite in Word/LibreOffice: zotero_get_citation_items and use each item's uri (never a web \
 link). Pandoc/LaTeX: use citation_key and csl from the same tool, or zotero_export_items.
-- Read a paper's text: zotero_get_item_fulltext with the paper or attachment key; continue \
-with the returned attachment_key, text_revision and next_offset. zotero_find_item_fulltext \
-locates a phrase.
+- Read a paper's text: zotero_get_item_fulltext and zotero_find_item_fulltext take a paper \
+or attachment key as item_key. Continue with the returned attachment_key as item_key, \
+plus text_revision and next_offset. zotero_find_item_fulltext locates a phrase.
 - Browse: zotero_get_collections, then zotero_get_collection_items; child attachments and \
 notes come from zotero_get_item_children.
 - Edit: use the local version returned by a create or update, or read the item first. A known \

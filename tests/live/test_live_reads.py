@@ -15,6 +15,7 @@ def test_search_items_by_title_returns_summaries(mcp, seed):
     assert hit["title"] == "Live alpha paper"
     assert hit["year"] == 2024
     assert hit["doi"] == "10.5555/live.alpha"
+    assert hit["candidate_attachment_key"] == seed.pdf
     assert isinstance(page["offset"], int)
 
 
@@ -36,7 +37,12 @@ def test_search_items_everything_mode_hits_attachment_with_parent(mcp, seed):
     page = mcp("search_items", {"query": PDF_NEEDLE, "qmode": "everything"})
     hit = next(item for item in page["items"] if item["key"] == seed.pdf)
     assert hit["parent_key"] == seed.alpha
-    assert hit["matched_attachment_key"] == seed.pdf
+    assert hit["item_type"] == "attachment"
+    assert hit["parent"] == {
+        "title": "Live alpha paper",
+        "creator_summary": "Ada Live",
+        "year": 2024,
+    }
 
 
 def test_search_items_blank_item_type_means_no_filter(mcp, seed):
@@ -104,12 +110,20 @@ def test_get_item_children(mcp, seed):
     assert types[seed.note] == "note"
 
 
-def test_get_collections(mcp, seed):
+def test_upstream_collection_num_items_counts_papers_not_child_attachments_or_notes(mcp, seed):
     page = mcp("get_collections", {"limit": 100})
     by_key = {item["key"]: item for item in page["items"]}
-    assert by_key[seed.parent]["data"]["name"] == "Live parent"
-    assert by_key[seed.parent]["data"]["parentCollection"] is False
-    assert by_key[seed.child]["data"]["parentCollection"] == seed.parent
+    assert by_key[seed.parent]["name"] == "Live parent"
+    assert "parent_key" not in by_key[seed.parent]
+    assert by_key[seed.child]["parent_key"] == seed.parent
+    raw = mcp("get_collections", {"limit": 100, "view": "raw"})
+    native = {item["key"]: item for item in raw["items"]}
+    # One member paper has a child PDF and note; those children do not add to numItems.
+    assert native[seed.parent]["meta"]["numItems"] == 1
+    assert native[seed.child]["meta"]["numItems"] == 0
+    assert by_key[seed.parent]["item_count"] == 1
+    assert by_key[seed.child]["item_count"] == 0
+    print("collection meta.numItems:", native[seed.parent]["meta"], native[seed.child]["meta"])
     assert isinstance(by_key[seed.child]["version"], int)
 
 
@@ -118,7 +132,7 @@ def test_get_collection_items(mcp, seed):
     assert seed.alpha in keys(page)
     # Children of collection members are not listed; the native non-top endpoint would.
     assert not {seed.pdf, seed.note} & set(keys(page))
-    assert all(item["parent_key"] is None for item in page["items"])
+    assert all("parent_key" not in item for item in page["items"])
     assert page["total"] == len(page["items"])
     assert mcp("get_collection_items", {"collection_key": seed.child})["items"] == []
 
@@ -178,8 +192,7 @@ def test_get_item_fulltext_chunks_reuse_revision(mcp, seed):
     second = mcp(
         "get_item_fulltext",
         {
-            "item_key": seed.alpha,
-            "attachment_key": first["attachment_key"],
+            "item_key": first["attachment_key"],
             "offset": first["next_offset"],
             "text_revision": first["text_revision"],
         },
@@ -190,7 +203,7 @@ def test_get_item_fulltext_chunks_reuse_revision(mcp, seed):
 
 
 def test_find_item_fulltext(mcp, seed):
-    result = mcp("find_item_fulltext", {"attachment_key": seed.pdf, "query": PDF_NEEDLE.upper()})
+    result = mcp("find_item_fulltext", {"item_key": seed.pdf, "query": PDF_NEEDLE.upper()})
     assert result["attachment_key"] == seed.pdf
     assert result["matches"], result
     assert PDF_NEEDLE in result["matches"][0]["snippet"].lower()

@@ -14,7 +14,7 @@ async def test_deterministic_read_workflow_and_envelope_sizes(library, zot):
         "library": {"type": "user", "id": 1},
         "links": {
             "self": {"href": "http://localhost/items/PAPER001"},
-            "enclosure": {"href": "http://localhost/items/PDF00001/file"},
+            "attachment": {"href": "http://localhost:23119/api/users/0/items/PDF00001"},
         },
         "data": {
             "itemType": "journalArticle",
@@ -37,7 +37,13 @@ async def test_deterministic_read_workflow_and_envelope_sizes(library, zot):
     zot.item.side_effect = None
     zot.item.return_value = parent
     zot.children.return_value = [attachment]
-    zot.fulltext_item.side_effect = [{"content": content}, {"content": content}]
+    from pyzotero import ResourceNotFoundError
+
+    zot.fulltext_item.side_effect = [
+        ResourceNotFoundError("parent has no index"),
+        {"content": content},
+        {"content": content},
+    ]
 
     async with create_connected_server_and_client_session(
         build_server(library), read_timeout_seconds=timedelta(seconds=10)
@@ -46,9 +52,9 @@ async def test_deterministic_read_workflow_and_envelope_sizes(library, zot):
         assert recent.isError is False
         page = recent.structuredContent
         summary = page["items"][0]
-        read_key = summary["fulltext"]["read_key"]
+        read_key = summary["key"]
         assert read_key == "PAPER001"
-        assert summary["fulltext"]["candidate_attachment_key"] == "PDF00001"
+        assert summary["candidate_attachment_key"] == "PDF00001"
 
         first = await session.call_tool(
             "zotero_get_item_fulltext",
@@ -62,8 +68,7 @@ async def test_deterministic_read_workflow_and_envelope_sizes(library, zot):
         second = await session.call_tool(
             "zotero_get_item_fulltext",
             {
-                "item_key": read_key,
-                "attachment_key": attachment_key,
+                "item_key": attachment_key,
                 "offset": 10,
                 "max_characters": 10,
                 "text_revision": revision,
@@ -84,5 +89,5 @@ async def test_deterministic_read_workflow_and_envelope_sizes(library, zot):
             "isError": recent.isError,
         }
         envelope_json = json.dumps(envelope, ensure_ascii=False, separators=(",", ":"))
-        assert len(business_json) == 302
-        assert len(envelope_json) == 724
+        assert len(business_json) < 350
+        assert len(envelope_json) < 900

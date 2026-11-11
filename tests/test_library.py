@@ -5,6 +5,7 @@ import pytest
 from pyzotero import (
     LocalAPIKeyRequiredError,
     PreConditionFailedError,
+    ResourceNotFoundError,
     ServerIDMismatchError,
 )
 
@@ -200,14 +201,19 @@ def test_fulltext_uses_index_and_character_paging(library, zot):
     zot.children.return_value = [
         {"key": "ATTACH01", "data": {"itemType": "attachment", "contentType": "application/pdf"}}
     ]
-    zot.fulltext_item.return_value = {"content": "甲乙丙丁戊", "indexedPages": 2, "totalPages": 3}
+    zot.fulltext_item.side_effect = [
+        ResourceNotFoundError("parent has no index"),
+        {"content": "甲乙丙丁戊", "indexedPages": 2, "totalPages": 3},
+    ]
     result = library.get_item_fulltext("ABCD1234", offset=1, max_characters=2)
+    assert result["attachment_key"] == "ATTACH01"
     assert result["content"] == "乙丙"
     assert result["next_offset"] == 3
     assert result["index"]["indexedPages"] == 2
 
 
 def test_multiple_attachments_are_not_probed_or_silently_replaced(library, zot):
+    zot.fulltext_item.side_effect = ResourceNotFoundError("parent has no index")
     zot.children.return_value = [
         {"key": k, "data": {"itemType": "attachment"}} for k in ("ATTACH01", "ATTACH02")
     ]
@@ -218,10 +224,11 @@ def test_multiple_attachments_are_not_probed_or_silently_replaced(library, zot):
         "ATTACH01",
         "ATTACH02",
     ]
-    zot.fulltext_item.assert_not_called()
+    zot.fulltext_item.assert_called_once_with("ABCD1234")
 
 
-def test_no_text_is_actionable(library):
+def test_no_text_is_actionable(library, zot):
+    zot.fulltext_item.side_effect = ResourceNotFoundError("parent has no index")
     with pytest.raises(FulltextError) as caught:
         library.get_item_fulltext("ABCD1234")
     assert caught.value.code == "FULLTEXT_ATTACHMENT_NOT_FOUND"

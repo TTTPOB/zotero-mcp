@@ -244,24 +244,21 @@ def test_plain_queries_keep_native_search_and_have_no_identifier_lookup(library,
     assert result["items"][0]["key"] == "PAPER001"
 
 
-async def test_tool_description_documents_identifier_lookup_without_workarounds(library):
-    from datetime import timedelta
-
+async def test_identifier_lookup_is_exposed_and_executed_through_mcp(library, zot):
     from mcp.shared.memory import create_connected_server_and_client_session
 
     from zotero_mcp.server import build_server
 
-    async with create_connected_server_and_client_session(
-        build_server(library), read_timeout_seconds=timedelta(seconds=10)
-    ) as session:
+    zot.top.return_value = [native("PAPER001", DOI="10.1234/example")]
+    async with create_connected_server_and_client_session(build_server(library)) as session:
         tool = next(
             t for t in (await session.list_tools()).tools if t.name == "zotero_search_items"
         )
+        result = await session.call_tool(
+            "zotero_search_items", {"query": "https://doi.org/10.1234/example"}
+        )
 
-    assert "identifier_lookup" in tool.description
-    assert "ISBN" in tool.description and "doi.org" in tool.description
-    assert "verify the returned doi" not in tool.description
-    properties = tool.inputSchema["properties"]
-    assert "verify the returned doi" not in properties["qmode"]["description"]
-    assert "DOI" in properties["query"]["description"]
     assert "identifier_lookup" in tool.outputSchema["properties"]
+    assert result.isError is False
+    assert result.structuredContent["items"][0]["key"] == "PAPER001"
+    assert result.structuredContent["identifier_lookup"]["found"] is True

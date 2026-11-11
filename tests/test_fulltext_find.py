@@ -111,9 +111,9 @@ def test_find_checks_text_revision(library, zot):
     "kwargs",
     [
         {"attachment_key": "bad", "query": "text"},
-        {"attachment_key": "ATTACH01", "query": " "},
-        {"attachment_key": "ATTACH01", "query": "text", "context_characters": -1},
-        {"attachment_key": "ATTACH01", "query": "text", "max_matches": 0},
+        {"item_key": "ATTACH01", "query": " "},
+        {"item_key": "ATTACH01", "query": "text", "context_characters": -1},
+        {"item_key": "ATTACH01", "query": "text", "max_matches": 0},
     ],
 )
 def test_find_rejects_invalid_arguments(library, zot, kwargs):

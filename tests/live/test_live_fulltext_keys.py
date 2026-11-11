@@ -9,15 +9,49 @@ def standalone_note(mcp):
     return result["results"][0]["key"]
 
 
+def test_upstream_best_attachment_prefers_first_pdf_and_reads_in_one_call(mcp, seed, tmp_path):
+    from live_support import minimal_pdf, read_item
+
+    path = tmp_path / "second.pdf"
+    path.write_bytes(minimal_pdf("second indexed words"))
+    second = mcp("attach_file", {"parent_key": seed.alpha, "file_path": str(path)})[
+        "attachment_key"
+    ]
+    try:
+        raw = read_item(mcp, seed.alpha, view="raw")
+        best = raw["links"]["attachment"]["href"].rsplit("/", 1)[-1]
+        # Zotero 10.0.6 picks the earlier imported PDF, not the later supplement.
+        assert best == seed.pdf
+        assert "enclosure" not in raw["links"]
+        children = mcp("get_item_children", {"item_key": seed.alpha, "view": "raw"})["items"]
+        assert {seed.pdf, second} <= {item["key"] for item in children}
+        assert raw["links"]["attachment"]["href"].endswith("/" + best)
+        summary = next(
+            item
+            for item in mcp("search_items", {"query": "Live alpha paper"})["items"]
+            if item["key"] == seed.alpha
+        )
+        assert summary["candidate_attachment_key"] == best
+        chunk = mcp("get_item_fulltext", {"item_key": seed.alpha})
+        assert chunk["attachment_key"] == best
+        print(
+            "two PDF best attachment:",
+            {"first": seed.pdf, "second": second, "picked": best, "content": chunk["content"]},
+        )
+    finally:
+        item = read_item(mcp, second)
+        mcp("delete_item", {"item_key": second, "version": item["version"]})
+
+
 def test_find_item_fulltext_accepts_a_parent_key(mcp, seed):
-    result = mcp("find_item_fulltext", {"attachment_key": seed.alpha, "query": PDF_NEEDLE})
+    result = mcp("find_item_fulltext", {"item_key": seed.alpha, "query": PDF_NEEDLE})
     assert result["attachment_key"] == seed.pdf
     assert result["matches"], result
 
 
 def test_find_item_fulltext_parent_without_attachments(mcp, new_item):
     key, _ = new_item()
-    error = mcp("find_item_fulltext", {"attachment_key": key, "query": "x"}, error=True)["error"]
+    error = mcp("find_item_fulltext", {"item_key": key, "query": "x"}, error=True)["error"]
     assert error["code"] == "FULLTEXT_ATTACHMENT_NOT_FOUND"
     assert "Index" not in error["message"]
 
@@ -25,7 +59,7 @@ def test_find_item_fulltext_parent_without_attachments(mcp, new_item):
 @pytest.mark.parametrize("tool", ["get_item_fulltext", "find_item_fulltext"])
 def test_note_keys_are_rejected_as_notes(mcp, seed, tool):
     for key in (seed.note, standalone_note(mcp)):
-        arguments = {"item_key": key} if tool == "get_item_fulltext" else {"attachment_key": key}
+        arguments = {"item_key": key}
         if tool == "find_item_fulltext":
             arguments["query"] = "x"
         error = mcp(tool, arguments, error=True)["error"]
@@ -34,8 +68,8 @@ def test_note_keys_are_rejected_as_notes(mcp, seed, tool):
         assert error["details"] == {"key": key, "item_type": "note"}
 
 
-def test_get_item_fulltext_note_as_attachment_key(mcp, seed):
-    arguments = {"item_key": seed.alpha, "attachment_key": seed.note}
+def test_get_item_fulltext_note_as_item_key(mcp, seed):
+    arguments = {"item_key": seed.note}
     error = mcp("get_item_fulltext", arguments, error=True)["error"]
     assert error["code"] == "INVALID_ARGUMENT"
     assert error["details"]["item_type"] == "note"
@@ -44,7 +78,7 @@ def test_get_item_fulltext_note_as_attachment_key(mcp, seed):
 @pytest.mark.parametrize("tool", ["get_item_fulltext", "find_item_fulltext"])
 def test_collection_and_missing_keys(mcp, seed, tool):
     def call(key):
-        arguments = {"item_key": key} if tool == "get_item_fulltext" else {"attachment_key": key}
+        arguments = {"item_key": key}
         if tool == "find_item_fulltext":
             arguments["query"] = "x"
         return mcp(tool, arguments, error=True)["error"]
@@ -74,9 +108,7 @@ def test_linked_url_attachment_is_not_indexable(mcp, seed):
         },
     )
     key = result["results"][0]["key"]
-    error = mcp("get_item_fulltext", {"item_key": seed.beta, "attachment_key": key}, error=True)[
-        "error"
-    ]
+    error = mcp("get_item_fulltext", {"item_key": key}, error=True)["error"]
     assert error["code"] == "FULLTEXT_NOT_INDEXED"
     assert error["retryable"] is False
     assert error["details"]["reason"] == "not_indexable"
@@ -85,9 +117,7 @@ def test_linked_url_attachment_is_not_indexable(mcp, seed):
 def test_recent_attachment_without_index_is_retryable(mcp, seed):
     # Zotero never indexes the API-uploaded text attachment, so it stays unindexed
     # and, as the seed was just added, looks like indexing that may still be queued.
-    error = mcp(
-        "get_item_fulltext", {"item_key": seed.beta, "attachment_key": seed.text}, error=True
-    )["error"]
+    error = mcp("get_item_fulltext", {"item_key": seed.text}, error=True)["error"]
     assert error["code"] == "FULLTEXT_NOT_INDEXED"
     assert error["retryable"] is True
     assert error["details"] == {"attachment_key": seed.text, "reason": "indexing_pending"}

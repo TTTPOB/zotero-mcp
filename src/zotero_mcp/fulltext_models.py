@@ -8,7 +8,7 @@ from typing_extensions import TypedDict
 FulltextItemKey = Annotated[
     str,
     Field(
-        description="Parent item or attachment key for indexed text.",
+        description="Paper or attachment key for indexed text; pass returned attachment_key as item_key when continuing.",
         min_length=8,
         max_length=8,
         pattern=r"^[A-Za-z0-9]{8}$",
@@ -18,16 +18,6 @@ FulltextAttachmentKey = Annotated[
     str,
     Field(
         description="Explicit attachment key; use the returned attachment_key when continuing.",
-        min_length=8,
-        max_length=8,
-        pattern=r"^[A-Za-z0-9]{8}$",
-    ),
-]
-FulltextFindKey = Annotated[
-    str,
-    Field(
-        description="Attachment key to search, or a parent item key to select its attachment "
-        "the same way get_item_fulltext does.",
         min_length=8,
         max_length=8,
         pattern=r"^[A-Za-z0-9]{8}$",
