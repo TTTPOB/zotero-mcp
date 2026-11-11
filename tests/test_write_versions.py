@@ -66,10 +66,18 @@ def test_update_collection_returns_the_new_version(library, zot):
     assert result["key"] == "COLL0001"
 
 
-def test_batch_updates_report_only_per_entry_outcomes(library, zot):
+def test_batch_updates_return_read_back_version_with_one_read_before_write(library, zot, item):
+    zot.item.side_effect = item_versions(item, 7, 12)
     result = library.batch_update_tags(["ABCD1234"], add=["new"])
-    assert result["results"][0]["status"] == "success"
-    assert result["results"][0] == {"input_index": 0, "key": "ABCD1234", "status": "success"}
+    assert result == {"ok": True, "status": "success", "results": [{"input_index": 0, "key": "ABCD1234", "status": "success", "version": 12}]}
+    assert zot.item.call_count == 2
+    zot.update_item.assert_called_once_with({"key": "ABCD1234", "version": 7, "tags": [{"tag": "keep", "type": 1}, {"tag": "new"}]})
+
+
+def test_batch_unreadable_version_is_omitted_after_a_confirmed_write(library, zot, item):
+    zot.item.side_effect = [item, RuntimeError("cannot read")]
+    result = library.batch_update_tags(["ABCD1234"], add=["new"])
+    assert result == {"ok": True, "status": "success", "results": [{"input_index": 0, "key": "ABCD1234", "status": "success"}]}
 
 
 async def test_mcp_result_has_only_set_fields_and_the_version(library, zot, item):

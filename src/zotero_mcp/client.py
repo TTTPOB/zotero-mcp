@@ -1662,6 +1662,10 @@ class Library:
             raise _not_found_error("item", payload["key"], "update_item") from exc
         if current["version"] != payload["version"]:
             raise _version_conflict_error("item", payload["key"], "update_item", current["version"])
+        return _single_write_result(payload["key"], self._update_item(payload))
+
+    def _update_item(self, payload: dict[str, Any]) -> int | None:
+        """Write already-read item data once and read back its actual local version."""
         try:
             confirmed = self.zot.update_item(payload)
         except (PreConditionFailedError, ResourceNotFoundError) as exc:
@@ -1671,7 +1675,7 @@ class Library:
                 UNKNOWN_WRITE_RESULT,
                 "Zotero did not confirm the update; inspect the item before retrying.",
             )
-        return _single_write_result(payload["key"], self._read_version("item", payload["key"]))
+        return self._read_version("item", payload["key"])
 
     @operation(write=True)
     def delete_item(self, item_key: ItemKey, version: Version) -> WriteResponse:
@@ -1822,7 +1826,8 @@ class Library:
         return _single_write_result(payload["key"])
 
     def _edit_lists(
-        self, item_keys: list[str], field: str, change: Callable[[list], list]
+        self, item_keys: list[str], field: str, change: Callable[[list], list],
+        *, current_items: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not 1 <= len(item_keys) <= 50:
             raise ValueError("Provide 1 to 50 item keys.")
@@ -1841,19 +1846,20 @@ class Library:
         for position, (input_index, item_key) in enumerate(indexed_keys):
             write_started = False
             try:
-                item = self.zot.item(item_key)
+                item = current_items[item_key] if current_items is not None else self.zot.item(item_key)
                 original = item["data"].get(field, [])
                 updated = change(copy.deepcopy(original))
                 if updated == original:
                     result["results"].append(
-                        {"input_index": input_index, "key": item_key, "status": "unchanged"}
+                        {"input_index": input_index, "key": item_key, "status": "unchanged", "version": item["version"]}
                     )
                     continue
                 write_started = True
-                self.update_item(item_key, item["version"], {field: updated})
-                result["results"].append(
-                    {"input_index": input_index, "key": item_key, "status": "success"}
-                )
+                version = self._update_item({"key": item_key, "version": item["version"], field: updated})
+                entry = {"input_index": input_index, "key": item_key, "status": "success"}
+                if version is not None:
+                    entry["version"] = version
+                result["results"].append(entry)
             except Exception as exc:
                 # Keep completed work visible; never silently replay a partial batch.
                 error = from_exception(
@@ -1905,7 +1911,7 @@ class Library:
         """Add/remove tags while preserving other tags and tag types.
 
         Read each item's current local version before writing. On the first error,
-        stop and report updated, failed and pending keys. At most 50 items.
+        stop and report per-entry statuses and known local versions. At most 50 items.
         """
         add, remove = add or [], remove or []
         if not add and not remove:
@@ -1925,11 +1931,13 @@ class Library:
 
         return self._edit_lists(item_keys, "tags", change)
 
-    def _reject_child_items(self, item_keys: list[str]) -> None:
-        """Fail before any write when a key is a child item (it cannot join a collection)."""
+    def _collection_items_for_write(self, item_keys: list[str]) -> dict[str, Any]:
+        """Read items once and reject child keys before any collection membership write."""
         children = []
+        items = {}
         for item_key in dict.fromkeys(key(k) for k in item_keys):
-            parent_key = self.zot.item(item_key).get("data", {}).get("parentItem")
+            items[item_key] = self.zot.item(item_key)
+            parent_key = items[item_key].get("data", {}).get("parentItem")
             if parent_key:
                 children.append({"key": item_key, "parent_key": parent_key})
         if children:
@@ -1940,6 +1948,7 @@ class Library:
                 f"parent items instead. No items were changed. Child items: {listed}.",
                 details={"children": children},
             )
+        return items
 
     @operation(write=True)
     def manage_collection_items(
@@ -1964,9 +1973,10 @@ class Library:
         collection_key = key(collection_key)
         if action not in {"add", "remove"}:
             raise ValueError("action must be add or remove.")
+        current_items = None
         if action == "add":
             self.zot.collection(collection_key)
-            self._reject_child_items(item_keys)
+            current_items = self._collection_items_for_write(item_keys)
 
         def change(collections):
             if action == "add" and collection_key not in collections:
@@ -1975,7 +1985,7 @@ class Library:
                 return [c for c in collections if c != collection_key]
             return collections
 
-        return self._edit_lists(item_keys, "collections", change)
+        return self._edit_lists(item_keys, "collections", change, current_items=current_items)
 
     def _attach_file(
         self,

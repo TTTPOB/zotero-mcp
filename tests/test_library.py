@@ -183,7 +183,7 @@ def test_tag_edit_preserves_unrelated_automatic_tag(library, zot):
 
 def test_noop_tag_edit_skips_write(library, zot):
     result = library.batch_update_tags(["ABCD1234"], add=["keep"])
-    assert result["results"][0]["status"] == "unchanged"
+    assert result["results"][0] == {"input_index": 0, "key": "ABCD1234", "status": "unchanged", "version": 7}
     zot.update_item.assert_not_called()
 
 

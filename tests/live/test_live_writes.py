@@ -150,11 +150,14 @@ def test_batch_update_tags_adds_and_removes_preserving_others(mcp, new_item):
         "batch_update_tags", {"item_keys": [first, second], "add": ["added"], "remove": ["drop"]}
     )
     assert result["ok"] and sorted(entry["key"] for entry in result["results"] if entry["status"] == "success") == sorted([first, second])
+    assert result["results"][0]["version"] == version_of(mcp, first)
+    assert result["results"][1]["version"] == version_of(mcp, second)
     assert tag_names(mcp, first) == {"keep", "added"}
     assert tag_names(mcp, second) == {"added"}
 
     again = mcp("batch_update_tags", {"item_keys": [first], "add": ["added"]})
     assert again["results"][0]["status"] == "unchanged"
+    assert again["results"][0]["version"] == result["results"][0]["version"]
 
 
 def test_manage_collection_items_add_and_remove_top_level_items(mcp, new_item):
@@ -166,6 +169,8 @@ def test_manage_collection_items_add_and_remove_top_level_items(mcp, new_item):
         {"collection_key": collection, "item_keys": [first, second], "action": "add"},
     )
     assert added["ok"] and sorted(entry["key"] for entry in added["results"] if entry["status"] == "success") == sorted([first, second])
+    assert added["results"][0]["version"] == version_of(mcp, first)
+    assert added["results"][1]["version"] == version_of(mcp, second)
     assert set(keys(mcp("get_collection_items", {"collection_key": collection}))) == {
         first,
         second,

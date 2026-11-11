@@ -118,7 +118,7 @@ def test_conflict_without_a_readable_version_still_reports_the_conflict(library,
 
 
 def test_batch_conflict_entry_carries_the_current_version(library, zot, item):
-    zot.item.side_effect = item_versions(item, 7, 7, 9)
+    zot.item.side_effect = item_versions(item, 7, 9)
     zot.update_item.side_effect = PreConditionFailedError("item version mismatch")
     result = library.batch_update_tags(["ABCD1234"], add=["new"])
     error = result["results"][0]["error"]
