@@ -663,18 +663,23 @@ class Library:
             if isinstance(getattr(search_request, "headers", None), Mapping)
             else None
         )
+        parent_keys = {
+            key(item["data"]["parentItem"])
+            for item in native_items
+            if item.get("data", {}).get("parentItem")
+        }
+        parents = (
+            self._lookup_items(sorted(parent_keys))
+            if parent_keys and (view == "summary" or (tags and tag_scope != "matched_item"))
+            else {}
+        )
         filtered_items = native_items
         if tags and tag_scope != "matched_item":
             filtered_items = []
             for item in native_items:
                 data = item.get("data", {}) if isinstance(item, Mapping) else {}
-                parent_item = None
                 parent = data.get("parentItem") if isinstance(data, Mapping) else None
-                if isinstance(parent, str) and parent:
-                    try:
-                        parent_item = self.zot.item(key(parent))
-                    except ResourceNotFoundError:
-                        parent_item = None
+                parent_item = parents.get(key(parent)) if parent else None
                 parent_item = parent_item or item
                 item_match = _tags_match(item, tags)
                 parent_match = _tags_match(parent_item, tags)
@@ -682,7 +687,7 @@ class Library:
                     tag_scope == "either" and (item_match or parent_match)
                 ):
                     filtered_items.append(item)
-        return page(
+        result = page(
             filtered_items,
             limit,
             offset,
@@ -692,6 +697,17 @@ class Library:
             headers=search_headers,
             search=True,
         )
+        if view == "summary":
+            for summary in result["items"]:
+                parent = parents.get(summary.get("parent_key"))
+                if parent is not None:
+                    parent_summary = project_items([parent])[0]
+                    summary["parent"] = {
+                        field: parent_summary[field]
+                        for field in ("title", "creator_summary", "year")
+                        if parent_summary.get(field) is not None and parent_summary[field] != ""
+                    }
+        return result
 
     def _lookup_identifier(
         self,

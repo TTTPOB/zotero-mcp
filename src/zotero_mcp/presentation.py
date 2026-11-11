@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import html
 import re
 from collections.abc import Mapping, Sequence
 from typing import Annotated, Any, Literal
@@ -69,6 +70,7 @@ class ItemSummary(_FieldsSetModel):
     parent_key: str | None = None
     matched_attachment_key: str | None = None
     candidate_attachment_key: str | None = None
+    parent: dict[str, Any] | None = None
 
 
 class ItemMetadata(_FieldsSetModel):
@@ -192,6 +194,10 @@ def _summary(item: Mapping[str, Any], *, search: bool) -> dict[str, Any]:
     title = data.get("title")
     if not isinstance(title, str):
         title = data.get("filename") if isinstance(data.get("filename"), str) else ""
+    if item_type == "note":
+        note = re.sub(r"(?i)<(?:br\s*/?|/?(?:p|div|h[1-6]|li))\b[^>]*>", "\n", data.get("note", ""))
+        text = html.unescape(re.sub(r"<[^>]*>", "", note))
+        title = next((line.strip()[:120] for line in text.splitlines() if line.strip()), "")
     candidate_key = item_key if item_type == "attachment" else preferred_attachment_key(item)
     result: dict[str, Any] = {
         "key": item_key,

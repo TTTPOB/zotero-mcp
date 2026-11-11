@@ -148,35 +148,65 @@ def test_everything_search_includes_native_attachment_hits(library, zot):
     attachment = _native_item(
         "PDF00001", item_type="attachment", title="paper.pdf", parent_key="PAPER001"
     )
-    zot.items.return_value = [parent, attachment]
+    zot.items.side_effect = [[parent, attachment], [parent]]
 
     result = library.search_items("body-only-term", qmode="everything", limit=25)
 
-    assert "itemType" not in zot.items.call_args.kwargs
+    assert "itemType" not in zot.items.call_args_list[0].kwargs
     assert [item["key"] for item in result["items"]] == ["PAPER001", "PDF00001"]
     assert result["items"][1]["matched_attachment_key"] == "PDF00001"
     assert result["items"][1]["parent_key"] == "PAPER001"
     assert "match_details_available" not in result["items"][1]
 
 
-def test_parent_tag_scope_is_explicit_and_bounded(library, zot):
-    attachment = _native_item(
-        "PDF00001", item_type="attachment", title="paper.pdf", parent_key="PAPER001"
-    )
-    parent = _native_item("PAPER001", title="Parent", tags=["review"])
-    zot.items.return_value = [attachment]
-    zot.item.side_effect = lambda item_key: parent if item_key == "PAPER001" else attachment
+def test_parent_context_and_tag_scopes_share_one_batch_and_keep_search_pagination(library, zot):
+    from types import SimpleNamespace
 
-    result = library.search_items(
-        "body-only-term",
-        tags=["review"],
-        qmode="everything",
-        tag_scope="parent",
-    )
+    hits = [
+        _native_item("PDF00001", item_type="attachment", parent_key="PAPER001"),
+        _native_item("PDF00002", item_type="attachment", parent_key="PAPER002", tags=["review"]),
+        _native_item("PDF00003", item_type="attachment", parent_key="PAPER002"),
+    ]
+    parents = [
+        _native_item("PAPER001", title="Parent", tags=["review"]),
+        _native_item("PAPER002", title="Other"),
+    ]
 
-    assert "tag" not in zot.items.call_args.kwargs
+    def items(**kwargs):
+        if "itemKey" in kwargs:
+            assert kwargs == {"itemKey": "PAPER001,PAPER002", "limit": 100}
+            zot.links = {}
+            zot.request = SimpleNamespace(headers={"Total-Results": "2"})
+            return parents
+        assert "tag" not in kwargs
+        zot.links = {"next": "http://localhost/items?start=3"}
+        zot.request = SimpleNamespace(headers={"Total-Results": "20"})
+        return hits
+
+    zot.items.side_effect = items
+    result = library.search_items("body", tags=["review"], qmode="everything", tag_scope="parent", limit=3)
     assert [item["key"] for item in result["items"]] == ["PDF00001"]
-    zot.item.assert_called_once_with("PAPER001")
+    assert result["items"][0]["parent"] == {"title": "Parent", "creator_summary": "Wang", "year": 2024}
+    assert result["next_offset"] == 3
+    assert result["total"] == 20
+    assert zot.items.call_count == 2
+    zot.item.assert_not_called()
+
+    result = library.search_items("body", tags=["review"], qmode="everything", tag_scope="either", limit=3)
+    assert [item["key"] for item in result["items"]] == ["PDF00001", "PDF00002"]
+    assert zot.items.call_count == 4
+
+
+def test_note_summary_uses_first_nonempty_plain_text_line_in_every_list(library, zot):
+    note = {"key": "NOTE0001", "version": 1, "data": {"itemType": "note", "note": "<div> </div><p>First &amp; useful</p><p>Second line</p>"}}
+    zot.top.return_value = [note]
+    zot.children.return_value = [note]
+    zot.collection_items_top.return_value = [note]
+    assert library.get_recent()["items"][0]["title"] == "First & useful"
+    assert library.get_item_children("PAPER001")["items"][0]["title"] == "First & useful"
+    assert library.get_collection_items("COLL0001")["items"][0]["title"] == "First & useful"
+    note["data"]["note"] = "<p>" + "x" * 150 + "</p>"
+    assert len(project_items([note])[0]["title"]) == 120
 
 
 @pytest.mark.parametrize("blank", ["", "   ", "\t\n"])
