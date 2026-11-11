@@ -279,6 +279,37 @@ def _response_version(value: Any) -> int | None:
     return candidate if type(candidate) is int and candidate >= 0 else None
 
 
+def _stored_item_warnings(sent: dict[str, Any], stored: dict[str, Any]) -> list[str]:
+    """Flag dropped fields and creator-role replacement, not routine normalization."""
+    warnings = []
+    item_type = stored.get("itemType", sent.get("itemType", "item"))
+    for field, value in sent.items():
+        if value in (None, "", [], {}) or field in stored:
+            continue
+        if value in stored.values():
+            continue  # A base field may have been mapped to its item-type-specific name.
+        destination = (
+            "is absent from stored data; extra gained content"
+            if stored.get("extra") and stored.get("extra") != sent.get("extra", "")
+            else "was not stored under that field"
+        )
+        warnings.append(
+            f"{field} on {item_type} {destination}; check get_item_schema before editing this field."
+        )
+    for index, creator in enumerate(sent.get("creators", [])):
+        saved_creators = stored.get("creators", [])
+        if index >= len(saved_creators):
+            break
+        original = creator.get("creatorType")
+        saved = saved_creators[index].get("creatorType")
+        if original != saved:
+            warnings.append(
+                f"creators[{index}].creatorType on {item_type} changed from {original} to {saved}; "
+                "check get_item_schema before editing creators."
+            )
+    return warnings
+
+
 def _result_status(entries: list[dict[str, Any]]) -> str:
     statuses = {entry["status"] for entry in entries}
     if not statuses or statuses <= {"success", "unchanged"}:
@@ -311,6 +342,7 @@ def write_result(
     *,
     input_keys: list[str | None] | None = None,
     input_count: int | None = None,
+    input_data: list[dict[str, Any]] | None = None,
     single: bool = False,
 ) -> dict[str, Any]:
     """Normalize pyzotero's indexed create response.
@@ -391,6 +423,12 @@ def write_result(
             entry["error"] = value
         elif (version := _response_version(value)) is not None:
             entry["version"] = version
+        if status == "success" and input_data is not None and isinstance(value, dict):
+            stored = value.get("data")
+            if isinstance(stored, dict):
+                warnings = _stored_item_warnings(input_data[index], stored)
+                if warnings:
+                    entry["warnings"] = warnings
         entries.append(entry)
 
     normalized = {
@@ -1624,6 +1662,7 @@ class Library:
         return write_result(
             self.zot.create_items(copy.deepcopy(items)),
             input_count=len(items),
+            input_data=items,
         )
 
     @operation(write=True)
@@ -1662,9 +1701,15 @@ class Library:
             raise _not_found_error("item", payload["key"], "update_item") from exc
         if current["version"] != payload["version"]:
             raise _version_conflict_error("item", payload["key"], "update_item", current["version"])
-        return _single_write_result(payload["key"], self._update_item(payload))
+        stored = self._update_item(payload)
+        result = _single_write_result(payload["key"], _response_version(stored))
+        if stored is not None:
+            warnings = _stored_item_warnings(changes, stored["data"])
+            if warnings:
+                result["results"][0]["warnings"] = warnings
+        return result
 
-    def _update_item(self, payload: dict[str, Any]) -> int | None:
+    def _update_item(self, payload: dict[str, Any]) -> dict[str, Any] | None:
         """Write already-read item data once and read back its actual local version."""
         try:
             confirmed = self.zot.update_item(payload)
@@ -1675,7 +1720,11 @@ class Library:
                 UNKNOWN_WRITE_RESULT,
                 "Zotero did not confirm the update; inspect the item before retrying.",
             )
-        return self._read_version("item", payload["key"])
+        try:
+            return self.zot.item(payload["key"])
+        except Exception:
+            # The write succeeded; unavailable read-back data must not change that outcome.
+            return None
 
     @operation(write=True)
     def delete_item(self, item_key: ItemKey, version: Version) -> WriteResponse:
@@ -1855,7 +1904,8 @@ class Library:
                     )
                     continue
                 write_started = True
-                version = self._update_item({"key": item_key, "version": item["version"], field: updated})
+                stored = self._update_item({"key": item_key, "version": item["version"], field: updated})
+                version = _response_version(stored)
                 entry = {"input_index": input_index, "key": item_key, "status": "success"}
                 if version is not None:
                     entry["version"] = version

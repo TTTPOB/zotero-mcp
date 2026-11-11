@@ -80,6 +80,10 @@ class WriteEntry(_WriteModel):
         default=None,
         description="Known local entity version; omitted when unavailable.",
     )
+    warnings: list[str] | None = Field(
+        default=None,
+        description="Stored fields differ from the submitted data; inspect these before continuing.",
+    )
     stage: WriteStage | None = None
     error: ErrorPayload | None = None
 
