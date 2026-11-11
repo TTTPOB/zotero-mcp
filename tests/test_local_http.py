@@ -175,6 +175,43 @@ def test_native_batch_partial_failure_is_preserved(wire):
     assert [c.method for c in calls] == ["GET", "POST"]
 
 
+def test_failed_query_does_not_leak_parameters(wire):
+    library, calls, responses = wire
+    responses.extend(
+        [
+            (200, [{"itemType": "note"}]),
+            (400, "invalid query"),
+            (200, [{"key": "ABCD1234", "version": 7, "data": {"title": "next item"}}]),
+        ]
+    )
+    with pytest.raises(LibraryError) as caught:
+        library.search_items("needle", item_type="note", tags=["previous"])
+    assert caught.value.code == "INVALID_ARGUMENT"
+    result = library.get_item_metadata(["ABCD1234"])
+    assert result["items"][0]["item"]["data"]["title"] == "next item"
+    assert calls[1].url.params["itemType"] == "note"
+    assert calls[1].url.params.get_list("tag") == ["previous"]
+    assert calls[2].url.params["itemKey"] == "ABCD1234"
+    assert "itemType" not in calls[2].url.params
+    assert "tag" not in calls[2].url.params
+    assert "q" not in calls[2].url.params
+    assert calls[2].url.params.get("format", "json") == "json"
+
+
+def test_failed_export_does_not_leak_format(wire):
+    library, calls, responses = wire
+    responses.extend(
+        [(400, "export failed"), (200, [{"key": "ABCD1234", "version": 7, "data": {}}])]
+    )
+    with pytest.raises(LibraryError) as caught:
+        library.export_items(["ABCD1234"], "bibtex")
+    assert caught.value.code == "INVALID_ARGUMENT"
+    result = library.get_item_metadata(["ABCD1234"])
+    assert result["items"][0]["item"]["key"] == "ABCD1234"
+    assert calls[0].url.params["format"] == "bibtex"
+    assert calls[1].url.params.get("format", "json") == "json"
+
+
 def test_search_then_metadata_does_not_leak_query(wire):
     library, calls, responses = wire
     responses.extend(

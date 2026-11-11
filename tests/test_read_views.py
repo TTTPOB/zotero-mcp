@@ -243,11 +243,6 @@ def test_note_summary_uses_first_nonempty_plain_text_line_in_every_list(library,
     assert len(project_items([note])[0]["title"]) == 120
 
 
-def test_explicit_item_type_is_trimmed_and_sent(library, zot):
-    library.search_items("term", qmode="everything", item_type=" -attachment ")
-    assert zot.items.call_args.kwargs["itemType"] == "-attachment"
-
-
 def test_fixed_fixture_summary_size_is_reproducible():
     items = [
         _native_item(

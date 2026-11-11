@@ -100,16 +100,27 @@ def test_success_and_unchanged_have_success_status():
     assert result["status"] == "success"
 
 
-def test_factory_connection_error_is_not_unknown_write():
+def test_factory_connection_error_is_not_unknown_write(zot):
+    attempts = 0
+
     def factory():
-        raise ConnectionError("Zotero is not running")
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ConnectionError("Zotero is not running")
+        return zot
 
     library = Library(factory)
     with pytest.raises(LibraryError) as raised:
         library.get_item_metadata(["ABCD1234"])
     assert raised.value.code == CONNECTION_ERROR
     assert raised.value.retryable is True
-    assert library._zot is None
+    try:
+        result = library.get_item_metadata(["ABCD1234"])
+        assert result["items"][0]["status"] == "ok"
+        assert result["items"][0]["item"]["key"] == "ABCD1234"
+    finally:
+        library.close()
 
 
 def test_write_transport_error_is_unknown_and_not_retryable(library, zot):

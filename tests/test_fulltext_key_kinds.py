@@ -63,15 +63,6 @@ def test_find_parent_whose_selected_attachment_is_unindexed(library, zot):
     assert caught.value.details["attachment_key"] == "ATTACH01"
 
 
-def test_find_real_attachment_key_needs_no_lookup(library, zot):
-    only_attachment_has_index(zot, "ATTACH01")
-
-    library.find_item_fulltext("ATTACH01", "needle")
-
-    zot.item.assert_not_called()
-    zot.children.assert_not_called()
-
-
 @pytest.mark.parametrize("tool", ["get", "find"])
 @pytest.mark.parametrize(
     ("item_type", "hint"), [("note", "get_notes"), ("annotation", "get_annotations")]

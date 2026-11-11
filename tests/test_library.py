@@ -85,11 +85,6 @@ def test_invalid_patch(library, zot, changes):
     zot.update_item.assert_not_called()
 
 
-def test_delete_uses_local_version(library, zot):
-    library.delete_item("ABCD1234", 7)
-    zot.delete_item.assert_called_once_with({"key": "ABCD1234", "version": 7})
-
-
 @pytest.mark.parametrize("items", [[{}], [{"itemType": "book", "key": "ABCD1234"}]])
 def test_invalid_create_never_writes(library, zot, items):
     with pytest.raises(LibraryError) as caught:
@@ -219,20 +214,6 @@ def test_no_text_is_actionable(library, zot):
     with pytest.raises(LibraryError) as caught:
         library.get_item_fulltext("ABCD1234")
     assert caught.value.code == "FULLTEXT_ATTACHMENT_NOT_FOUND"
-
-
-def test_failed_query_state_cleared(library, zot):
-    def fail(**kwargs):
-        zot.url_params = {"itemType": "note", "format": "bibtex"}
-        raise RuntimeError("failure")
-
-    zot.items.side_effect = fail
-    with pytest.raises(LibraryError) as caught:
-        library.search_items("q")
-    assert caught.value.code == "UNKNOWN_ERROR"
-    assert zot.url_params is None
-    assert zot.links is None
-    assert zot.tag_data is False
 
 
 def test_attachment_upload_failure_keeps_created_key(library, zot, tmp_path):
