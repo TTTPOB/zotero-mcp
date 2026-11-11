@@ -18,13 +18,15 @@ async def test_fulltext_tools_expose_constrained_inputs_and_success(library, zot
         result = await session.call_tool(
             "zotero_get_item_fulltext",
             {
-                "item_key": "ABCD1234",
-                "attachment_key": "ATTACH01",
+                "item_key": "ATTACH01",
                 "offset": 0,
                 "max_characters": 100,
             },
         )
 
+    assert "attachment_key" not in get_schema
+    assert "attachment_key" not in find_schema
+    assert find_schema["item_key"]["minLength"] == 8
     assert get_schema["item_key"]["minLength"] == 8
     assert get_schema["item_key"]["maxLength"] == 8
     assert get_schema["offset"]["minimum"] == 0
@@ -72,7 +74,7 @@ async def test_fulltext_schema_rejects_bad_key_as_structured_error(library, zot)
     ) as session:
         result = await session.call_tool(
             "zotero_find_item_fulltext",
-            {"attachment_key": "bad", "query": "text"},
+            {"item_key": "bad", "query": "text"},
         )
 
     assert result.isError is True

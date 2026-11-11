@@ -60,7 +60,6 @@ from zotero_mcp.fulltext_models import (
     FulltextAttachmentKey,
     FulltextChunk,
     FulltextContextCharacters,
-    FulltextFindKey,
     FulltextFindResult,
     FulltextItemKey,
     FulltextMaxCharacters,
@@ -1256,11 +1255,11 @@ class Library:
         )
 
     def _read_indexed_attachment(
-        self, key_: str, *, resolve_parent: bool = False
+        self, key_: str
     ) -> tuple[str, str, dict[str, Any]]:
         """Read indexed text; return (attachment_key, content, index response).
 
-        With resolve_parent, a parent item key is accepted and mapped to one of its
+        A parent item key is accepted and mapped to one of its
         attachments by the same rules as get_item_fulltext. The common case (a real
         attachment key) costs one request; the item is fetched only after a miss.
         """
@@ -1272,13 +1271,6 @@ class Library:
         if isinstance(data, Mapping) and data.get("itemType") == "attachment":
             raise unindexed_attachment_error(key_, item)
         self._reject_non_text_item(key_, item)
-        if not resolve_parent:
-            raise LibraryError(
-                INVALID_ARGUMENT,
-                "This key is a parent item, not an attachment. Pass it as item_key, or "
-                "pass one of its attachment keys.",
-                details={"key": key_, "kind": "parent_item"},
-            )
         selected = self._select_fulltext_attachment(key_, item)
         selected_key = key(selected["key"])
         indexed = self._fetch_index(selected_key)
@@ -1307,36 +1299,20 @@ class Library:
         item_key: FulltextItemKey,
         offset: FulltextOffset = 0,
         max_characters: FulltextMaxCharacters = 20000,
-        attachment_key: Annotated[
-            FulltextAttachmentKey | None,
-            Field(
-                description="Explicit attachment key to resolve selection; reuse the returned key for later chunks."
-            ),
-        ] = None,
         text_revision: FulltextRevision = None,
     ) -> FulltextChunk:
         """Read Zotero-indexed text from one stable attachment.
 
-        Pass a parent item key to select a sole attachment or a sole PDF. If the
-        parent has multiple plausible attachments, provide ``attachment_key`` from
-        the returned candidate list. Offsets are zero-based Unicode code points;
-        ``text_revision`` must be reused for subsequent chunks.
+        Pass a paper or attachment key as item_key. A paper uses Zotero's best
+        attachment, then a sole attachment or sole PDF. If selection is ambiguous,
+        pass one of the candidates' attachment_key as item_key. For later chunks,
+        pass the returned attachment_key as item_key and reuse text_revision.
+        Offsets are zero-based Unicode code points.
         """
         pagination(1, offset)
         if type(max_characters) is not int or not 1 <= max_characters <= 50000:
             raise ValueError("max_characters must be between 1 and 50000.")
-        item_key = key(item_key)
-        if attachment_key is not None:
-            selected_key = key(attachment_key)
-        else:
-            item = self._fulltext_lookup(item_key)
-            if item.get("data", {}).get("itemType") == "attachment":
-                selected_key = item_key
-            else:
-                self._reject_non_text_item(item_key, item)
-                selected_key = key(self._select_fulltext_attachment(item_key, item)["key"])
-
-        _, content, response = self._read_indexed_attachment(selected_key)
+        selected_key, content, response = self._read_indexed_attachment(key(item_key))
         self._check_text_revision(content, text_revision, attachment_key=selected_key)
         return make_chunk(
             attachment_key=selected_key,
@@ -1349,7 +1325,7 @@ class Library:
     @operation()
     def find_item_fulltext(
         self,
-        attachment_key: FulltextFindKey,
+        item_key: FulltextItemKey,
         query: FulltextQuery,
         context_characters: FulltextContextCharacters = 120,
         max_matches: FulltextMaxMatches = 20,
@@ -1362,16 +1338,14 @@ class Library:
         unmodified Zotero index text. This does not search parent items or the
         whole library, and does not use regular expressions.
         """
-        attachment_key = key(attachment_key)
+        item_key = key(item_key)
         if not isinstance(query, str) or not query.strip():
             raise ValueError("query must contain non-whitespace text.")
         if type(context_characters) is not int or not 0 <= context_characters <= 5000:
             raise ValueError("context_characters must be between 0 and 5000.")
         if type(max_matches) is not int or not 1 <= max_matches <= 100:
             raise ValueError("max_matches must be between 1 and 100.")
-        attachment_key, content, response = self._read_indexed_attachment(
-            attachment_key, resolve_parent=True
-        )
+        attachment_key, content, response = self._read_indexed_attachment(item_key)
         self._check_text_revision(content, text_revision, attachment_key=attachment_key)
         return make_find_result(
             attachment_key=attachment_key,

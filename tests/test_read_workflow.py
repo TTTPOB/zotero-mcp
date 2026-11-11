@@ -37,7 +37,9 @@ async def test_deterministic_read_workflow_and_envelope_sizes(library, zot):
     zot.item.side_effect = None
     zot.item.return_value = parent
     zot.children.return_value = [attachment]
-    zot.fulltext_item.side_effect = [{"content": content}, {"content": content}]
+    from pyzotero import ResourceNotFoundError
+
+    zot.fulltext_item.side_effect = [ResourceNotFoundError("parent has no index"), {"content": content}, {"content": content}]
 
     async with create_connected_server_and_client_session(
         build_server(library), read_timeout_seconds=timedelta(seconds=10)
@@ -62,8 +64,7 @@ async def test_deterministic_read_workflow_and_envelope_sizes(library, zot):
         second = await session.call_tool(
             "zotero_get_item_fulltext",
             {
-                "item_key": read_key,
-                "attachment_key": attachment_key,
+                "item_key": attachment_key,
                 "offset": 10,
                 "max_characters": 10,
                 "text_revision": revision,

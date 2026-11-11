@@ -104,7 +104,7 @@ def select_attachment(
     reason = "multiple PDF attachments" if len(pdfs) > 1 else "multiple attachments"
     raise FulltextError(
         "FULLTEXT_ATTACHMENT_AMBIGUOUS",
-        "Multiple attachments could contain the requested text; provide attachment_key.",
+        "Multiple attachments could contain the requested text; pass one of the candidates' attachment_key as item_key.",
         details={
             "parent_key": parent_key,
             "reason": reason,
