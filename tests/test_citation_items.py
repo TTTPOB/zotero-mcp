@@ -158,9 +158,11 @@ def test_invalid_csl_is_per_key_error(library, zot, csl):
 
 
 @pytest.mark.parametrize("keys", [[], ["ABCD1234"] * 51])
-def test_citation_count_is_bounded(library, zot, keys):
-    with pytest.raises(ValueError, match="1 to 50"):
-        library.get_citation_items(keys)
+async def test_citation_count_is_bounded(library, zot, keys):
+    async with create_connected_server_and_client_session(build_server(library)) as session:
+        result = await session.call_tool("zotero_get_citation_items", {"item_keys": keys})
+    assert result.isError
+    assert result.structuredContent["error"]["code"] == "INVALID_ARGUMENT"
     zot.top.assert_not_called()
 
 

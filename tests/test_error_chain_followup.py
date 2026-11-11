@@ -6,19 +6,8 @@ from mcp.shared.memory import create_connected_server_and_client_session
 from pyzotero import CouldNotReachURLError, PreConditionFailedError, ResourceNotFoundError
 
 from zotero_mcp.errors import UNKNOWN_WRITE_RESULT, VERSION_CONFLICT, LibraryError, from_exception
-from zotero_mcp.fulltext import FulltextError, text_revision
+from zotero_mcp.fulltext import text_revision
 from zotero_mcp.server import build_server
-
-
-def test_fulltext_error_is_a_library_error_without_losing_fields():
-    error = FulltextError(
-        "FULLTEXT_NOT_INDEXED",
-        "No indexed text.",
-        details={"attachment_key": "ATTACH01"},
-    )
-    assert isinstance(error, LibraryError)
-    assert from_exception(error).code == "FULLTEXT_NOT_INDEXED"
-    assert from_exception(error).details == {"attachment_key": "ATTACH01"}
 
 
 def test_unwrap_stops_at_business_error():

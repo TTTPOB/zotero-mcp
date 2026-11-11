@@ -5,22 +5,18 @@ from typing import Annotated, Any
 from pydantic import Field
 from typing_extensions import TypedDict
 
+from zotero_mcp.models import ItemKey
+
 FulltextItemKey = Annotated[
-    str,
+    ItemKey,
     Field(
         description="Paper or attachment key for indexed text; pass returned attachment_key as item_key when continuing.",
-        min_length=8,
-        max_length=8,
-        pattern=r"^[A-Za-z0-9]{8}$",
     ),
 ]
 FulltextAttachmentKey = Annotated[
-    str,
+    ItemKey,
     Field(
         description="Explicit attachment key; use the returned attachment_key when continuing.",
-        min_length=8,
-        max_length=8,
-        pattern=r"^[A-Za-z0-9]{8}$",
     ),
 ]
 FulltextOffset = Annotated[
@@ -65,16 +61,6 @@ AttachmentTextContent = Annotated[
         min_length=1,
         max_length=50_000_000,
     ),
-]
-AttachmentTextOffset = Annotated[
-    int,
-    Field(
-        description="Zero-based Unicode code point offset; continue with returned next_offset.",
-        ge=0,
-    ),
-]
-AttachmentTextMaxCharacters = Annotated[
-    int, Field(description="Maximum Unicode code points per chunk (1–50,000).", ge=1, le=50000)
 ]
 
 

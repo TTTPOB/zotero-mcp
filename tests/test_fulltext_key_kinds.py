@@ -5,7 +5,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from pyzotero import ResourceNotFoundError
 
-from zotero_mcp.client import FulltextError
 from zotero_mcp.errors import LibraryError
 from zotero_mcp.fulltext import unindexed_attachment_error
 
@@ -43,7 +42,7 @@ def test_find_parent_with_ambiguous_attachments_lists_candidates(library, zot):
     ]
     only_attachment_has_index(zot, "NOBODY00")
 
-    with pytest.raises(FulltextError) as caught:
+    with pytest.raises(LibraryError) as caught:
         library.find_item_fulltext("ABCD1234", "needle")
 
     assert caught.value.code == "FULLTEXT_ATTACHMENT_AMBIGUOUS"
@@ -57,20 +56,11 @@ def test_find_parent_whose_selected_attachment_is_unindexed(library, zot):
     zot.children.return_value = [attachment("ATTACH01", contentType="application/pdf")]
     only_attachment_has_index(zot, "NOBODY00")
 
-    with pytest.raises(FulltextError) as caught:
+    with pytest.raises(LibraryError) as caught:
         library.find_item_fulltext("ABCD1234", "needle")
 
     assert caught.value.code == "FULLTEXT_NOT_INDEXED"
     assert caught.value.details["attachment_key"] == "ATTACH01"
-
-
-def test_find_real_attachment_key_needs_no_lookup(library, zot):
-    only_attachment_has_index(zot, "ATTACH01")
-
-    library.find_item_fulltext("ATTACH01", "needle")
-
-    zot.item.assert_not_called()
-    zot.children.assert_not_called()
 
 
 @pytest.mark.parametrize("tool", ["get", "find"])
@@ -144,7 +134,7 @@ def test_collection_key_is_named_as_a_collection(library, zot, tool):
 
 def test_parent_without_attachments_does_not_ask_for_indexing(library, zot):
     zot.fulltext_item.side_effect = ResourceNotFoundError("parent has no index")
-    with pytest.raises(FulltextError) as caught:
+    with pytest.raises(LibraryError) as caught:
         library.get_item_fulltext("ABCD1234")
 
     assert caught.value.code == "FULLTEXT_ATTACHMENT_NOT_FOUND"

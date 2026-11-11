@@ -38,7 +38,6 @@ INVALID_ARGUMENT = "INVALID_ARGUMENT"
 NOT_FOUND = "NOT_FOUND"
 NOT_CITABLE = "NOT_CITABLE"
 CITATION_DATA_INVALID = "CITATION_DATA_INVALID"
-NO_INDEX = "NO_INDEX"
 UNAUTHORIZED = "UNAUTHORIZED"
 VERSION_CONFLICT = "VERSION_CONFLICT"
 CONNECTION_ERROR = "CONNECTION_ERROR"
@@ -52,12 +51,8 @@ LIBRARY_LOCKED = "LIBRARY_LOCKED"
 UNSUPPORTED_VERSION = "UNSUPPORTED_VERSION"
 
 
-class LibraryError(ValueError, RuntimeError):
-    """An operation failure with a stable code and recovery hint.
-
-    The dual ValueError/RuntimeError base keeps compatibility with callers of the
-    pre-contract API while every boundary now receives the same structured fields.
-    """
+class LibraryError(Exception):
+    """An operation failure with a stable code and recovery hint."""
 
     def __init__(
         self,
@@ -86,13 +81,6 @@ class LibraryError(ValueError, RuntimeError):
         if self.details is not None:
             payload["details"] = self.details
         return {"error": payload}
-
-
-def no_index_error(message: str = "No indexed attachment text is available.") -> LibraryError:
-    """Build the actionable error returned when Zotero has no readable index."""
-    if "index the attachment" not in message.lower():
-        message = f"{message} Index the attachment in Zotero first."
-    return LibraryError(NO_INDEX, message, retryable=False)
 
 
 def _unwrap(exc: BaseException) -> BaseException:
@@ -154,7 +142,7 @@ def _param_name(loc: tuple[Any, ...]) -> str:
 
 
 def _is_key_param(name: str) -> bool:
-    return re.search(r"(^|_)keys?$", name) is not None
+    return name == "parent_collection" or re.search(r"(^|_)keys?$", name) is not None
 
 
 def key_source(name: str) -> str:
@@ -337,17 +325,18 @@ def from_exception(
         )
 
     if isinstance(
-        original, (CouldNotReachURLError, UploadError, TooManyRetriesError, ZoteroHTTPError)
+        original,
+        (
+            CouldNotReachURLError,
+            UploadError,
+            TooManyRetriesError,
+            ZoteroHTTPError,
+            httpx2.HTTPError,
+            ConnectionError,
+            TimeoutError,
+            OSError,
+        ),
     ):
-        return LibraryError(
-            UNKNOWN_WRITE_RESULT if write else CONNECTION_ERROR,
-            "The Zotero connection ended before the operation was confirmed. Inspect the library before retrying."
-            if write
-            else "Could not complete the connection to Zotero.",
-            retryable=False if write else True,
-            details={"operation": operation} if operation else None,
-        )
-    if isinstance(original, (httpx2.HTTPError, ConnectionError, TimeoutError, OSError)):
         return LibraryError(
             UNKNOWN_WRITE_RESULT if write else CONNECTION_ERROR,
             "The Zotero connection ended before the operation was confirmed. Inspect the library before retrying."
@@ -362,8 +351,6 @@ def from_exception(
         return LibraryError(INVALID_ARGUMENT, message, retryable=False, details=details)
 
     message = str(original).strip()
-    if "no indexed attachment" in message.lower() or "index the attachment" in message.lower():
-        return no_index_error(message)
     if isinstance(original, (TypeError, ValueError, KeyError, IndexError)):
         return LibraryError(
             INVALID_ARGUMENT,
@@ -389,7 +376,6 @@ __all__ = [
     "INVALID_ARGUMENT",
     "LIBRARY_LOCKED",
     "LibraryError",
-    "NO_INDEX",
     "NOT_FOUND",
     "NOT_CITABLE",
     "CITATION_DATA_INVALID",
@@ -400,5 +386,4 @@ __all__ = [
     "VERSION_CONFLICT",
     "format_validation_error",
     "from_exception",
-    "no_index_error",
 ]

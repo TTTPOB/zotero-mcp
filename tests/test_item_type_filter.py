@@ -53,6 +53,7 @@ def test_blank_item_type_is_treated_as_omitted(library, zot, blank):
 
 def test_item_types_are_fetched_once_per_library(library, zot):
     for _ in range(3):
-        library.search_items("term", item_type="book")
+        result = library.search_items("term", item_type="book")
+        assert result["items"][0]["key"] == "ABCD1234"
 
     zot.item_types.assert_called_once()

@@ -34,7 +34,6 @@ from zotero_mcp.errors import (
     CITATION_DATA_INVALID,
     CONNECTION_ERROR,
     INVALID_ARGUMENT,
-    KEY_FORMAT,
     NOT_CITABLE,
     NOT_FOUND,
     UNKNOWN_ERROR,
@@ -42,10 +41,8 @@ from zotero_mcp.errors import (
     VERSION_CONFLICT,
     LibraryError,
     from_exception,
-    key_source,
 )
 from zotero_mcp.fulltext import (
-    FulltextError,
     make_chunk,
     make_find_result,
     parse_fulltext_response,
@@ -57,8 +54,6 @@ from zotero_mcp.fulltext import (
 from zotero_mcp.fulltext_models import (
     AttachmentTextChunk,
     AttachmentTextContent,
-    AttachmentTextMaxCharacters,
-    AttachmentTextOffset,
     FulltextAttachmentKey,
     FulltextChunk,
     FulltextContextCharacters,
@@ -71,17 +66,16 @@ from zotero_mcp.fulltext_models import (
     FulltextRevision,
 )
 from zotero_mcp.identifiers import Identifier, matching_field, parse_identifier
-from zotero_mcp.models import ItemDataList, ItemKey, ItemKeyList, Version, WriteResponse
+from zotero_mcp.models import ItemDataList, ItemKey, ItemKeyList, Version, WriteResult
 from zotero_mcp.presentation import (
     ItemMetadataBatch,
     ItemPage,
-    ReadItemKey,
     ReadLimit,
     ReadOffset,
+    ReadProjection,
     ReadTag,
     ReadView,
     TagPage,
-    normalize_view,
     project_items,
 )
 
@@ -117,22 +111,10 @@ def new_client(settings: Settings | None = None) -> Zotero:
 
 def key(value: str) -> str:
     value = value.upper()
-    if not re.fullmatch(r"[A-Z0-9]{8}", value):
-        raise ValueError(f"A Zotero key must be {KEY_FORMAT}; {key_source('item_key')}.")
-    return value
-
-
-def version_number(value: int) -> int:
-    if type(value) is not int or value < 0:
-        raise ValueError("version must be a nonnegative local API version.")
     return value
 
 
 def pagination(limit: int, offset: int) -> dict[str, Any]:
-    if type(limit) is not int or not 1 <= limit <= 100:
-        raise ValueError("limit must be between 1 and 100.")
-    if type(offset) is not int or offset < 0:
-        raise ValueError("offset must be a nonnegative integer.")
     return {"limit": limit, "start": offset}
 
 
@@ -198,11 +180,8 @@ def page(
     headers: Mapping[str, Any] | None = None,
 ) -> ItemPage:
     """Build a projected page using native response pagination when available."""
-    normalize_view(view)
     projected = project_items(items, view)
     upstream_count = len(items) if consumed_count is None else consumed_count
-    if type(upstream_count) is not int or upstream_count < 0:
-        raise ValueError("consumed_count must be a nonnegative integer.")
 
     total = _total_results(headers)
     next_link = _next_link(links, headers)
@@ -613,7 +592,6 @@ class Library:
         view: ReadView = "raw",
         consumed_count: int | None = None,
     ) -> ItemPage:
-        normalize_view(view)
         request = getattr(self.zot, "request", None)
         return page(
             items,
@@ -662,12 +640,7 @@ class Library:
                 description="Apply tags to the native hit, its parent, or either level within the current native page. For DOI/ISBN queries tags filter the matching items themselves."
             ),
         ] = "matched_item",
-        view: Annotated[
-            ReadView,
-            Field(
-                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
-            ),
-        ] = "summary",
+        view: ReadProjection = "summary",
     ) -> ItemPage:
         """Search requires a query or at least one valid tag.
 
@@ -689,34 +662,18 @@ class Library:
         the matches, and ``offset``/``limit``/``next_offset``/``total`` page through
         the exact matches only.
         """
-        normalize_view(view)
         self._check_item_type(item_type)
-        if not isinstance(qmode, str) or qmode not in {"titleCreatorYear", "everything"}:
-            raise ValueError("qmode must be titleCreatorYear or everything.")
-        if not isinstance(tag_scope, str) or tag_scope not in {"matched_item", "parent", "either"}:
-            raise ValueError("tag_scope must be matched_item, parent, or either.")
-        if not isinstance(query, str):
-            raise ValueError("query must be a string.")
-        valid_tags = (
-            isinstance(tags, list)
-            and bool(tags)
-            and all(isinstance(tag, str) and bool(tag.strip()) for tag in tags)
-        )
+        valid_tags = bool(tags) and all(tag.strip() for tag in tags)
         if not query.strip() and not valid_tags:
             raise LibraryError(
                 QUERY_OR_TAGS_REQUIRED,
                 "Provide a query or at least one valid tag. To browse recent items, use zotero_get_recent.",
             )
-        if tags is not None and not isinstance(tags, list):
+        if tags is not None and any(not tag.strip() for tag in tags):
             raise ValueError("tags must be a list of non-empty strings.")
-        if tags is not None and any(not isinstance(tag, str) or not tag.strip() for tag in tags):
-            raise ValueError("tags must be a list of non-empty strings.")
-        if item_type is not None and not isinstance(item_type, str):
-            raise ValueError("item_type must be a string when provided.")
         # An empty or whitespace-only item_type means "no filter", like omitting it.
         item_type = item_type.strip() if item_type and item_type.strip() else None
 
-        pagination(limit, offset)
         identifier = parse_identifier(query)
         if identifier is not None:
             return self._lookup_identifier(identifier, tags, item_type, limit, offset, view)
@@ -863,12 +820,7 @@ class Library:
                 description="1–50 Zotero item keys, including child notes and attachments; results retain input order and duplicates."
             ),
         ],
-        view: Annotated[
-            ReadView,
-            Field(
-                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
-            ),
-        ] = "metadata",
+        view: ReadProjection = "metadata",
     ) -> ItemMetadataBatch:
         """Read 1–50 items by key; each result is ``{index, key, status, item | error}``.
 
@@ -877,17 +829,8 @@ class Library:
         are readable. ``item`` is semantic metadata by default; use ``view='raw'``
         for Zotero's native object.
         """
-        normalize_view(view)
-        if not 1 <= len(item_keys) <= 50:
-            raise ValueError("Provide 1 to 50 item keys.")
         keys = [key(k) for k in item_keys]
-        wanted = set(keys)
-        # Not /items/top: child items must be readable. Zotero also returns the
-        # children of each requested item here, so keep only the requested keys.
-        # The limit is explicit (pyzotero defaults to 100); everything() follows
-        # the remaining pages when children push results past one page.
-        returned = self.zot.everything(self.zot.items(itemKey=",".join(sorted(wanted)), limit=100))
-        by_key = {item["key"]: item for item in returned if item.get("key") in wanted}
+        by_key = self._lookup_items(keys)
         entries = []
         for index, item_key in enumerate(keys):
             entry: dict[str, Any] = {"index": index, "key": item_key}
@@ -926,15 +869,10 @@ class Library:
     @operation()
     def get_item_children(
         self,
-        item_key: ReadItemKey,
+        item_key: ItemKey,
         limit: ReadLimit = 25,
         offset: ReadOffset = 0,
-        view: Annotated[
-            ReadView,
-            Field(
-                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
-            ),
-        ] = "summary",
+        view: ReadProjection = "summary",
     ) -> ItemPage:
         """List an item's child attachments, notes or annotations."""
         parent = key(item_key)
@@ -954,8 +892,6 @@ class Library:
         ] = "summary",
     ) -> ItemPage:
         """List collections with keys, versions, names and item counts by default."""
-        if view not in {"summary", "raw"}:
-            raise ValueError("view must be one of: summary, raw.")
         result = self._page(self.zot.collections(**pagination(limit, offset)), limit, offset)
         if view == "summary":
             summaries = []
@@ -976,15 +912,10 @@ class Library:
     @operation()
     def get_collection_items(
         self,
-        collection_key: ReadItemKey,
+        collection_key: ItemKey,
         limit: ReadLimit = 25,
         offset: ReadOffset = 0,
-        view: Annotated[
-            ReadView,
-            Field(
-                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
-            ),
-        ] = "summary",
+        view: ReadProjection = "summary",
     ) -> ItemPage:
         """List the top-level items directly in a collection, as summaries by default.
 
@@ -1029,12 +960,7 @@ class Library:
         self,
         limit: ReadLimit = 25,
         offset: ReadOffset = 0,
-        view: Annotated[
-            ReadView,
-            Field(
-                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
-            ),
-        ] = "summary",
+        view: ReadProjection = "summary",
     ) -> ItemPage:
         """List all top-level items, including independent attachments, as summaries."""
         return self._page(
@@ -1048,17 +974,12 @@ class Library:
     def get_notes(
         self,
         parent_key: Annotated[
-            ReadItemKey | None,
+            ItemKey | None,
             Field(description="Parent item key to restrict notes; omit to list library notes."),
         ] = None,
         limit: ReadLimit = 25,
         offset: ReadOffset = 0,
-        view: Annotated[
-            ReadView,
-            Field(
-                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
-            ),
-        ] = "metadata",
+        view: ReadProjection = "metadata",
     ) -> ItemPage:
         """Read notes, optionally restricted to a parent item."""
         params = {**pagination(limit, offset), "itemType": "note"}
@@ -1073,15 +994,10 @@ class Library:
     @operation()
     def get_annotations(
         self,
-        attachment_key: ReadItemKey,
+        attachment_key: ItemKey,
         limit: ReadLimit = 25,
         offset: ReadOffset = 0,
-        view: Annotated[
-            ReadView,
-            Field(
-                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
-            ),
-        ] = "metadata",
+        view: ReadProjection = "metadata",
     ) -> ItemPage:
         """Read Zotero reader annotations belonging to an attachment."""
         attachment = key(attachment_key)
@@ -1231,14 +1147,10 @@ class Library:
     def read_attachment_text(
         self,
         attachment_key: FulltextAttachmentKey,
-        offset: AttachmentTextOffset = 0,
-        max_characters: AttachmentTextMaxCharacters = 50000,
+        offset: FulltextOffset = 0,
+        max_characters: FulltextMaxCharacters = 50000,
     ) -> AttachmentTextChunk:
         """Read original UTF-8 bytes from one safe text attachment."""
-        if type(offset) is not int or offset < 0:
-            raise ValueError("offset must be a nonnegative integer.")
-        if type(max_characters) is not int or not 1 <= max_characters <= 50000:
-            raise ValueError("max_characters must be between 1 and 50000.")
         attachment_key = key(attachment_key)
         item = self.zot.item(attachment_key)
         filename, content_type = self._safe_attachment_text_metadata(item)
@@ -1330,9 +1242,10 @@ class Library:
     def _read_indexed_attachment(self, key_: str) -> tuple[str, str, dict[str, Any]]:
         """Read indexed text; return (attachment_key, content, index response).
 
-        A parent item key is accepted and mapped to one of its
-        attachments by the same rules as get_item_fulltext. The common case (a real
-        attachment key) costs one request; the item is fetched only after a miss.
+        The first read usually starts with a paper key and selects one of its
+        attachments by the same rules as get_item_fulltext. Continuations use the
+        returned attachment key and cost one request when its index is available;
+        the item is fetched only after an index miss.
         """
         indexed = self._fetch_index(key_)
         if indexed is not None:
@@ -1352,8 +1265,8 @@ class Library:
     @staticmethod
     def _check_text_revision(content: str, expected: str | None, *, attachment_key: str) -> str:
         actual = text_revision(content)
-        if expected is not None and (not isinstance(expected, str) or expected != actual):
-            raise FulltextError(
+        if expected is not None and expected != actual:
+            raise LibraryError(
                 "FULLTEXT_REVISION_MISMATCH",
                 "The attachment text changed; restart reading from offset 0 with the new revision.",
                 details={
@@ -1380,9 +1293,6 @@ class Library:
         pass the returned attachment_key as item_key and reuse text_revision.
         Offsets are zero-based Unicode code points.
         """
-        pagination(1, offset)
-        if type(max_characters) is not int or not 1 <= max_characters <= 50000:
-            raise ValueError("max_characters must be between 1 and 50000.")
         selected_key, content, response = self._read_indexed_attachment(key(item_key))
         self._check_text_revision(content, text_revision, attachment_key=selected_key)
         return make_chunk(
@@ -1410,12 +1320,8 @@ class Library:
         whole library, and does not use regular expressions.
         """
         item_key = key(item_key)
-        if not isinstance(query, str) or not query.strip():
+        if not query.strip():
             raise ValueError("query must contain non-whitespace text.")
-        if type(context_characters) is not int or not 0 <= context_characters <= 5000:
-            raise ValueError("context_characters must be between 0 and 5000.")
-        if type(max_matches) is not int or not 1 <= max_matches <= 100:
-            raise ValueError("max_matches must be between 1 and 100.")
         attachment_key, content, response = self._read_indexed_attachment(item_key)
         self._check_text_revision(content, text_revision, attachment_key=attachment_key)
         return make_find_result(
@@ -1517,8 +1423,6 @@ class Library:
         citation_key plus csl for Pandoc/LaTeX. Never use links.alternate.href (a web
         page URL) as a citation URI. CSL is unchanged; its id is not a lookup key.
         """
-        if not 1 <= len(item_keys) <= 50:
-            raise ValueError("Provide 1 to 50 item keys.")
         keys = [key(k) for k in item_keys]
         returned = self.zot.top(itemKey=",".join(keys), include="data,csljson", limit=len(keys))
         by_key = {item["key"]: item for item in returned}
@@ -1608,8 +1512,6 @@ class Library:
         citation key when available (otherwise an item URI), not a lookup key.
         For per-key citation data use zotero_get_citation_items.
         """
-        if not 1 <= len(item_keys) <= 50:
-            raise ValueError("Provide 1 to 50 item keys.")
         keys = [key(k) for k in item_keys]
         result = self.zot.top(itemKey=",".join(keys), format=format, limit=len(item_keys))
         request = self.zot.request
@@ -1663,7 +1565,7 @@ class Library:
         )
 
     @operation(write=True)
-    def add_items(self, items: ItemDataList) -> WriteResponse:
+    def add_items(self, items: ItemDataList) -> WriteResult:
         """Create 1 to 50 items, notes or annotations from Zotero item-data objects.
 
         Use zotero_get_item_schema to check fields. Child notes/annotations need
@@ -1671,8 +1573,6 @@ class Library:
         anything is written. Returns each successful and failed batch entry; a batch may
         partially succeed. Never resubmit successful entries.
         """
-        if not 1 <= len(items) <= 50:
-            raise ValueError("Provide 1 to 50 items per call.")
         for item in items:
             if not isinstance(item.get("itemType"), str) or not item["itemType"]:
                 raise ValueError("Each item must have an itemType.")
@@ -1700,7 +1600,7 @@ class Library:
                 description="Changed Zotero fields only; arrays replace whole arrays, so preserve entries you want to keep."
             ),
         ],
-    ) -> WriteResponse:
+    ) -> WriteResult:
         """Patch item metadata, a note or annotation using its last-read local version.
 
         Only supplied fields change. Arrays such as tags, creators and collections
@@ -1715,7 +1615,7 @@ class Library:
         payload = {
             **copy.deepcopy(changes),
             "key": key(item_key),
-            "version": version_number(version),
+            "version": version,
         }
         # Check existence first: PATCH on an unknown key answers 400 (or, when the changes
         # contain itemType, creates a new item under that key) instead of 404.
@@ -1753,14 +1653,14 @@ class Library:
             return None
 
     @operation(write=True)
-    def delete_item(self, item_key: ItemKey, version: Version) -> WriteResponse:
+    def delete_item(self, item_key: ItemKey, version: Version) -> WriteResult:
         """Permanently delete an item (including child items), note or annotation.
 
         This does not move it to Trash. Supply its last-read local version. A missing
         item is NOT_FOUND; a concurrent change is VERSION_CONFLICT with
         error.details.current_version.
         """
-        payload = {"key": key(item_key), "version": version_number(version)}
+        payload = {"key": key(item_key), "version": version}
         try:
             confirmed = self.zot.delete_item(payload)
         except (PreConditionFailedError, ResourceNotFoundError) as exc:
@@ -1788,7 +1688,7 @@ class Library:
         tags: Annotated[
             list[str] | None, Field(description="Tag names to assign to the new note.")
         ] = None,
-    ) -> WriteResponse:
+    ) -> WriteResult:
         """Create a child note. Escape plain text by default; as_html preserves Zotero HTML."""
         content = text if as_html else "<p>" + html.escape(text).replace("\n", "<br/>") + "</p>"
         if title:
@@ -1815,10 +1715,11 @@ class Library:
         parent_collection: Annotated[
             str | None,
             Field(
-                description="Parent collection key; omit or use an empty string to create at the root."
+                description="Parent collection key; omit or use an empty string to create at the root.",
+                pattern=r"^(?:[A-Za-z0-9]{8})?$",
             ),
         ] = None,
-    ) -> WriteResponse:
+    ) -> WriteResult:
         """Create a collection, optionally under a parent collection."""
         if not name.strip():
             raise ValueError("A collection name cannot be empty.")
@@ -1837,10 +1738,11 @@ class Library:
         parent_collection: Annotated[
             str | None,
             Field(
-                description="New parent collection key; empty string moves to root, null leaves the parent unchanged."
+                description="New parent collection key; empty string moves to root, null leaves the parent unchanged.",
+                pattern=r"^(?:[A-Za-z0-9]{8})?$",
             ),
         ] = None,
-    ) -> WriteResponse:
+    ) -> WriteResult:
         """Rename/move a collection. Use parent_collection='' to move it to the root.
 
         A missing collection is NOT_FOUND. A concurrent change is VERSION_CONFLICT with
@@ -1852,7 +1754,6 @@ class Library:
         if name is not None and not name.strip():
             raise ValueError("A collection name cannot be empty.")
         collection_key = key(collection_key)
-        version_number(version)
         # Check existence first: PUT on an unknown key creates a new collection under it.
         try:
             current = self.zot.collection(collection_key)
@@ -1885,13 +1786,13 @@ class Library:
         )
 
     @operation(write=True)
-    def delete_collection(self, collection_key: ItemKey, version: Version) -> WriteResponse:
+    def delete_collection(self, collection_key: ItemKey, version: Version) -> WriteResult:
         """Permanently delete a collection. Library items remain; child collections are also removed.
 
         A missing collection is NOT_FOUND; a concurrent change is VERSION_CONFLICT with
         error.details.current_version.
         """
-        payload = {"key": key(collection_key), "version": version_number(version)}
+        payload = {"key": key(collection_key), "version": version}
         try:
             confirmed = self.zot.delete_collection(payload)
         except (PreConditionFailedError, ResourceNotFoundError) as exc:
@@ -1910,8 +1811,6 @@ class Library:
         *,
         current_items: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        if not 1 <= len(item_keys) <= 50:
-            raise ValueError("Provide 1 to 50 item keys.")
         indexed_keys: list[tuple[int, str]] = []
         seen: set[str] = set()
         for input_index, raw_key in enumerate(item_keys):
@@ -2000,7 +1899,7 @@ class Library:
         remove: Annotated[
             list[str] | None, Field(description="Tag names to remove, preserving all other tags.")
         ] = None,
-    ) -> WriteResponse:
+    ) -> WriteResult:
         """Add/remove tags while preserving other tags and tag types.
 
         Read each item's current local version before writing. On the first error,
@@ -2054,7 +1953,7 @@ class Library:
                 description="Add or remove collection membership; removing does not delete items."
             ),
         ],
-    ) -> WriteResponse:
+    ) -> WriteResult:
         """Add/remove up to 50 items from a collection, preserving other memberships.
 
         Stop at the first failure and report completed and pending keys.
@@ -2064,8 +1963,6 @@ class Library:
         details list each child's key and parent_key; add the parent item instead.
         """
         collection_key = key(collection_key)
-        if action not in {"add", "remove"}:
-            raise ValueError("action must be add or remove.")
         current_items = None
         if action == "add":
             self.zot.collection(collection_key)
@@ -2087,7 +1984,7 @@ class Library:
         title: str | None = None,
         *,
         content_type_override: str | None = None,
-    ) -> WriteResponse:
+    ) -> WriteResult:
         """Copy an existing absolute-path file into Zotero's local attachment storage.
 
         No URL download. If upload fails after creation, returns the attachment key
@@ -2195,7 +2092,7 @@ class Library:
             str | None,
             Field(description="Attachment title; omit or use an empty string to use the filename."),
         ] = None,
-    ) -> WriteResponse:
+    ) -> WriteResult:
         """Copy a local file into Zotero attachment storage.
 
         No version is returned after upload; read the attachment before editing it.
@@ -2203,15 +2100,13 @@ class Library:
         return self._attach_file(parent_key, file_path, title)
 
     @operation(write=True)
-    def attach_markdown(self, parent_key: ItemKey, content: AttachmentTextContent) -> WriteResponse:
+    def attach_markdown(self, parent_key: ItemKey, content: AttachmentTextContent) -> WriteResult:
         """Create or reuse the fixed Markdown attachment for one paper.
 
         Uploads return no version; read the attachment before editing it. Reused
         attachments may include their last-read version.
         """
         parent_key = key(parent_key)
-        if not isinstance(content, str) or not content:
-            raise ValueError("content must contain non-empty Markdown text.")
         try:
             raw = content.encode("utf-8")
         except UnicodeEncodeError as exc:

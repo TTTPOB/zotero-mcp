@@ -1,17 +1,17 @@
 import pytest
+from mcp.shared.memory import create_connected_server_and_client_session
 from pyzotero import PreConditionFailedError, ResourceNotFoundError
 
 from zotero_mcp.client import Library, write_result
 from zotero_mcp.errors import (
     CONNECTION_ERROR,
     INVALID_ARGUMENT,
-    NO_INDEX,
     NOT_FOUND,
     UNKNOWN_WRITE_RESULT,
     VERSION_CONFLICT,
     LibraryError,
-    from_exception,
 )
+from zotero_mcp.server import build_server
 
 
 def test_library_error_has_stable_payload():
@@ -100,16 +100,27 @@ def test_success_and_unchanged_have_success_status():
     assert result["status"] == "success"
 
 
-def test_factory_connection_error_is_not_unknown_write():
+def test_factory_connection_error_is_not_unknown_write(zot):
+    attempts = 0
+
     def factory():
-        raise ConnectionError("Zotero is not running")
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ConnectionError("Zotero is not running")
+        return zot
 
     library = Library(factory)
     with pytest.raises(LibraryError) as raised:
         library.get_item_metadata(["ABCD1234"])
     assert raised.value.code == CONNECTION_ERROR
     assert raised.value.retryable is True
-    assert library._zot is None
+    try:
+        result = library.get_item_metadata(["ABCD1234"])
+        assert result["items"][0]["status"] == "ok"
+        assert result["items"][0]["item"]["key"] == "ABCD1234"
+    finally:
+        library.close()
 
 
 def test_write_transport_error_is_unknown_and_not_retryable(library, zot):
@@ -144,22 +155,17 @@ def test_batch_result_keeps_updated_failed_and_pending_entries(library, zot):
     assert result["results"][2] == {"input_index": 2, "key": "THIRD003", "status": "pending"}
 
 
-def test_no_index_message_is_not_duplicated():
-    error = from_exception(
-        ValueError("No indexed attachment text is available. Index the attachment in Zotero first.")
-    )
-    assert error.code == NO_INDEX
-    assert error.message.count("Index the attachment") == 1
-
-
 def test_write_result_rejects_empty_response_with_machine_code():
     with pytest.raises(LibraryError) as raised:
         write_result({"success": {}, "failed": {}})
     assert raised.value.code == UNKNOWN_WRITE_RESULT
 
 
-def test_invalid_write_arguments_have_machine_code(library, zot):
-    with pytest.raises(LibraryError) as raised:
-        library.update_item("bad", 7, {"title": "new"})
-    assert raised.value.code == INVALID_ARGUMENT
+async def test_invalid_write_arguments_have_machine_code(library, zot):
+    async with create_connected_server_and_client_session(build_server(library)) as session:
+        result = await session.call_tool(
+            "zotero_update_item", {"item_key": "bad", "version": 7, "changes": {"title": "new"}}
+        )
+    assert result.isError
+    assert result.structuredContent["error"]["code"] == INVALID_ARGUMENT
     zot.update_item.assert_not_called()

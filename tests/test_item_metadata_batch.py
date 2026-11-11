@@ -51,8 +51,10 @@ def test_child_items_are_readable_and_unrequested_children_are_dropped(library, 
 def test_request_uses_items_endpoint_with_explicit_limit_and_all_pages(library, zot):
     zot.items.return_value = [PAPER]
 
-    library.get_item_metadata(["PAPER001", "PDF00001"])
+    result = library.get_item_metadata(["PAPER001", "PDF00001"])
 
+    assert [entry["status"] for entry in result["items"]] == ["ok", "error"]
+    assert result["items"][1]["error"]["code"] == "NOT_FOUND"
     zot.items.assert_called_once_with(itemKey="PAPER001,PDF00001", limit=100)
     zot.top.assert_not_called()
     zot.everything.assert_called_once()
@@ -67,13 +69,6 @@ def test_items_beyond_the_first_page_are_found(library, zot):
     entries = library.get_item_metadata(["PAPER001"])["items"]
 
     assert entries[0]["status"] == "ok"
-
-
-@pytest.mark.parametrize("keys", [[], ["ABCD1234"] * 51])
-def test_key_count_is_limited_to_1_to_50(library, zot, keys):
-    with pytest.raises(ValueError):
-        library.get_item_metadata(keys)
-    zot.items.assert_not_called()
 
 
 def test_fifty_keys_are_accepted(library, zot):

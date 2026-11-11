@@ -5,7 +5,7 @@ from unittest.mock import call
 import pytest
 from pyzotero import ResourceNotFoundError
 
-from zotero_mcp.client import FulltextError
+from zotero_mcp.errors import LibraryError
 from zotero_mcp.fulltext import make_chunk, select_attachment, text_revision
 
 
@@ -62,7 +62,7 @@ def test_matching_attachment_link_is_preferred_without_fetching_url(library, zot
 def test_non_candidate_attachment_does_not_override_ambiguity():
     candidates = [attachment("PAPER001"), attachment("PAPER002")]
 
-    with pytest.raises(FulltextError) as caught:
+    with pytest.raises(LibraryError) as caught:
         select_attachment(
             candidates,
             parent_key="ABCD1234",
@@ -76,7 +76,7 @@ def test_multiple_pdfs_return_limited_candidates_without_probing(library, zot):
     zot.children.return_value = [attachment(f"PDF{index:05d}") for index in range(1, 8)]
     zot.fulltext_item.side_effect = ResourceNotFoundError("parent has no index")
 
-    with pytest.raises(FulltextError) as caught:
+    with pytest.raises(LibraryError) as caught:
         library.get_item_fulltext("ABCD1234")
 
     error = caught.value
@@ -110,7 +110,7 @@ def test_follow_up_read_uses_revision_and_rejects_changed_text(library, zot):
     assert first["text_revision"] == text_revision(original)
     assert first["next_offset"] == 3
 
-    with pytest.raises(FulltextError) as caught:
+    with pytest.raises(LibraryError) as caught:
         library.get_item_fulltext(
             "ATTACH01",
             offset=3,
@@ -178,7 +178,7 @@ def test_initial_chunk_covering_all_text_is_complete(library, zot):
 
 
 def test_offset_beyond_text_is_rejected_before_returning_invalid_interval():
-    with pytest.raises(FulltextError) as caught:
+    with pytest.raises(LibraryError) as caught:
         make_chunk(
             attachment_key="ATTACH01",
             response={"content": "甲乙"},
@@ -198,7 +198,7 @@ def test_unindexed_explicit_attachment_has_actionable_error(library, zot):
         "data": {"itemType": "attachment", "contentType": "application/pdf"},
     }
 
-    with pytest.raises(FulltextError) as caught:
+    with pytest.raises(LibraryError) as caught:
         library.get_item_fulltext("ATTACH01")
 
     assert caught.value.code == "FULLTEXT_NOT_INDEXED"

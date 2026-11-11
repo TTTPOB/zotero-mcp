@@ -20,12 +20,6 @@ from zotero_mcp.fulltext_models import (
 )
 
 
-class FulltextError(LibraryError):
-    """A fulltext failure retaining its historical class name and fields."""
-
-    pass
-
-
 def text_revision(content: str) -> str:
     """Return a stable revision for the exact Unicode text returned by Zotero."""
     return "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
@@ -41,7 +35,7 @@ def attachment_candidate(attachment: Mapping[str, Any]) -> FulltextCandidate:
     data = _attachment_data(attachment)
     attachment_key = attachment.get("key")
     if not isinstance(attachment_key, str) or not attachment_key:
-        raise FulltextError(
+        raise LibraryError(
             "FULLTEXT_ATTACHMENT_INVALID",
             "Zotero returned an attachment without a valid key.",
         )
@@ -75,7 +69,7 @@ def select_attachment(
     """Select the confirmed best attachment, then a unique PDF, without probing fallbacks."""
     candidates = list(attachments)
     if not candidates:
-        raise FulltextError(
+        raise LibraryError(
             "FULLTEXT_ATTACHMENT_NOT_FOUND",
             "This item has no attachments, so there is no text to read.",
             details={"parent_key": parent_key, "candidates": []},
@@ -102,7 +96,7 @@ def select_attachment(
 
     limited_candidates = [attachment_candidate(attachment) for attachment in candidates[:5]]
     reason = "multiple PDF attachments" if len(pdfs) > 1 else "multiple attachments"
-    raise FulltextError(
+    raise LibraryError(
         "FULLTEXT_ATTACHMENT_AMBIGUOUS",
         "Multiple attachments could contain the requested text; pass one of the candidates' attachment_key as item_key.",
         details={
@@ -136,7 +130,7 @@ def _recently_added(data: Mapping[str, Any], now: datetime | None) -> bool:
 
 def unindexed_attachment_error(
     attachment_key: str, attachment: Mapping[str, Any], *, now: datetime | None = None
-) -> FulltextError:
+) -> LibraryError:
     """Explain why an attachment has no indexed text and whether waiting can help.
 
     Zotero answers 404 for a missing index whatever the cause, so this inspects the
@@ -152,7 +146,7 @@ def unindexed_attachment_error(
         content_type and content_type.lower().startswith(_UNINDEXABLE_CONTENT_PREFIXES)
     ):
         details.update(reason="not_indexable", link_mode=link_mode, content_type=content_type)
-        return FulltextError(
+        return LibraryError(
             "FULLTEXT_NOT_INDEXED",
             "This attachment is a link or a media file, which Zotero does not index, so it "
             "has no text to read. Choose another attachment.",
@@ -160,7 +154,7 @@ def unindexed_attachment_error(
         )
     if _recently_added(data, now):
         details["reason"] = "indexing_pending"
-        return FulltextError(
+        return LibraryError(
             "FULLTEXT_NOT_INDEXED",
             "No indexed text is available yet. The attachment was added recently and Zotero "
             "may still be indexing it; try again in a few seconds. If it stays empty, "
@@ -169,7 +163,7 @@ def unindexed_attachment_error(
             details=details,
         )
     details["reason"] = "not_indexed"
-    return FulltextError(
+    return LibraryError(
         "FULLTEXT_NOT_INDEXED",
         "No indexed text is available for this attachment. If it was just added, Zotero may "
         "still be indexing it and a later retry can work; otherwise rebuild the index in "
@@ -181,14 +175,14 @@ def unindexed_attachment_error(
 def parse_fulltext_response(response: Any, *, attachment_key: str) -> tuple[str, dict[str, Any]]:
     """Validate the small part of Zotero's fulltext response used by this module."""
     if not isinstance(response, Mapping):
-        raise FulltextError(
+        raise LibraryError(
             "FULLTEXT_RESPONSE_INVALID",
             "Zotero returned an invalid fulltext response.",
             details={"attachment_key": attachment_key},
         )
     content = response.get("content", "")
     if not isinstance(content, str):
-        raise FulltextError(
+        raise LibraryError(
             "FULLTEXT_RESPONSE_INVALID",
             "Zotero returned non-text fulltext content.",
             details={"attachment_key": attachment_key},
@@ -225,7 +219,7 @@ def make_chunk(
     max_characters: int,
 ) -> FulltextChunk:
     if offset > len(content):
-        raise FulltextError(
+        raise LibraryError(
             "FULLTEXT_OFFSET_OUT_OF_RANGE",
             "offset is beyond the indexed text; use an offset up to total_characters.",
             details={"offset": offset, "total_characters": len(content)},

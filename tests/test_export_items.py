@@ -38,9 +38,11 @@ def test_csljson_export_rejects_invalid_json(library, zot):
 
 
 @pytest.mark.parametrize("keys", [[], ["ABCD1234"] * 51])
-def test_export_rejects_out_of_range_count(library, zot, keys):
-    with pytest.raises(ValueError, match="1 to 50"):
-        library.export_items(keys)
+async def test_export_rejects_out_of_range_count(library, zot, keys):
+    async with create_connected_server_and_client_session(build_server(library)) as session:
+        result = await session.call_tool("zotero_export_items", {"item_keys": keys})
+    assert result.isError
+    assert result.structuredContent["error"]["code"] == "INVALID_ARGUMENT"
     zot.top.assert_not_called()
 
 

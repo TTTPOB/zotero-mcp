@@ -1,7 +1,5 @@
 import json
 
-import pytest
-
 from zotero_mcp.presentation import project_items
 
 
@@ -243,31 +241,6 @@ def test_note_summary_uses_first_nonempty_plain_text_line_in_every_list(library,
     assert library.get_collection_items("COLL0001")["items"][0]["title"] == "First & useful"
     note["data"]["note"] = "<p>" + "x" * 150 + "</p>"
     assert len(project_items([note])[0]["title"]) == 120
-
-
-def test_explicit_item_type_is_sent_and_non_string_is_rejected(library, zot):
-    library.search_items("term", qmode="everything", item_type=" -attachment ")
-    assert zot.items.call_args.kwargs["itemType"] == "-attachment"
-
-    zot.items.reset_mock()
-    with pytest.raises(ValueError):
-        library.search_items("term", item_type=[])
-    zot.items.assert_not_called()
-
-
-@pytest.mark.parametrize(
-    "kwargs",
-    [{"view": []}, {"qmode": []}, {"tag_scope": []}],
-)
-def test_search_selector_constraints_are_value_errors(library, zot, kwargs):
-    with pytest.raises(ValueError):
-        library.search_items("query", **kwargs)
-    zot.items.assert_not_called()
-
-
-def test_read_view_selector_rejects_unhashable_values(library, zot):
-    with pytest.raises(ValueError):
-        library.get_recent(view=[])
 
 
 def test_fixed_fixture_summary_size_is_reproducible():

@@ -10,6 +10,7 @@ from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 from zotero_mcp import cli, config
+from zotero_mcp.client import Library
 from zotero_mcp.server import READ_TOOLS, WRITE_TOOLS, build_server
 
 BASE_URL = "http://127.0.0.1:8000"
@@ -115,8 +116,19 @@ def test_out_of_range_http_port_is_rejected_before_binding(fake_server, capsys):
     build.assert_not_called()
 
 
-async def test_stateless_http_survives_requests_and_service_rebuild(library, zot):
-    zot.client.close.reset_mock()
+async def test_stateless_http_survives_requests_and_service_rebuild(item):
+    clients = []
+
+    def factory():
+        zot = Mock(local=True)
+        zot.items.return_value = [
+            {**item, "data": {**item["data"], "title": f"Client {len(clients) + 1}"}}
+        ]
+        zot.everything.side_effect = lambda items: items
+        clients.append(zot)
+        return zot
+
+    library = Library(factory)
     initialize = {
         "jsonrpc": "2.0",
         "id": 1,
@@ -158,9 +170,10 @@ async def test_stateless_http_survives_requests_and_service_rebuild(library, zot
             assert (
                 legacy_call["result"]["structuredContent"]["items"][0]["item"]["key"] == "ABCD1234"
             )
-            zot.client.close.assert_not_called()
+            assert len(clients) == 1
+            clients[0].client.close.assert_not_called()
 
-    zot.client.close.assert_called_once()
+    clients[0].client.close.assert_called_once()
 
     rebuilt = build_server(library)
     rebuilt_app = rebuilt.streamable_http_app()
@@ -173,9 +186,18 @@ async def test_stateless_http_survives_requests_and_service_rebuild(library, zot
             assert (
                 rebuilt_call["result"]["structuredContent"]["items"][0]["item"]["key"] == "ABCD1234"
             )
-            assert zot.client.close.call_count == 1
+            assert (
+                rebuilt_call["result"]["structuredContent"]["items"][0]["item"]["data"]["title"]
+                == "Client 2"
+            )
+            assert len(clients) == 2
+            assert clients[1] is not clients[0]
+            assert clients[0].items.call_count == 3
+            assert clients[1].items.call_count == 1
+            clients[1].client.close.assert_not_called()
 
-    assert zot.client.close.call_count == 2
+    clients[0].client.close.assert_called_once()
+    clients[1].client.close.assert_called_once()
 
 
 async def test_http_session_serves_tools_without_authentication(library, zot):

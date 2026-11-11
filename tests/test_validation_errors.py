@@ -152,6 +152,46 @@ async def test_write_tool_keeps_the_write_envelope(library):
     assert error["message"].startswith("item_key must be an 8-character Zotero key")
 
 
-def test_key_helper_error_is_actionable(library):
-    with pytest.raises(ValueError, match="8-character Zotero key.*not a URI or title"):
-        library.get_item_children("not-a-key-at-all-but-passes-no-pydantic")
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("tool", "arguments"),
+    [
+        ("zotero_search_items", {"query": "x", "limit": 0}),
+        ("zotero_search_items", {"query": "x", "limit": 101}),
+        ("zotero_search_items", {"query": "x", "item_type": []}),
+        ("zotero_search_items", {"query": "x", "view": []}),
+        ("zotero_search_items", {"query": "x", "qmode": []}),
+        ("zotero_search_items", {"query": "x", "tag_scope": []}),
+        ("zotero_get_recent", {"view": []}),
+        ("zotero_delete_item", {"item_key": "ABCD1234", "version": -1}),
+        ("zotero_add_items", {"items": []}),
+        ("zotero_add_items", {"items": [{"itemType": "book"}] * 51}),
+    ],
+)
+async def test_schema_rejects_invalid_arguments_before_library(library, zot, tool, arguments):
+    result = await _call(library, tool, arguments)
+    assert _error(result)["code"] == "INVALID_ARGUMENT"
+    zot.items.assert_not_called()
+    zot.delete_item.assert_not_called()
+    zot.create_items.assert_not_called()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("tool", "arguments"),
+    [
+        ("zotero_create_collection", {"name": "n", "parent_collection": "Reading list"}),
+        (
+            "zotero_update_collection",
+            {"collection_key": "COLL0001", "version": 1, "parent_collection": "x"},
+        ),
+    ],
+)
+async def test_parent_collection_must_be_a_key_or_empty(library, zot, tool, arguments):
+    result = await _call(library, tool, arguments)
+
+    message = _error(result)["message"]
+    assert message.startswith("parent_collection must be an 8-character Zotero key")
+    assert "zotero_get_collections" in message
+    zot.create_collections.assert_not_called()
+    zot.update_collection.assert_not_called()
