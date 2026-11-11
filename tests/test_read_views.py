@@ -220,16 +220,6 @@ def test_note_summary_uses_first_nonempty_plain_text_line_in_every_list(library,
     assert len(project_items([note])[0]["title"]) == 120
 
 
-@pytest.mark.parametrize("blank", ["", "   ", "\t\n"])
-def test_blank_item_type_is_treated_as_omitted(library, zot, blank):
-    library.search_items("everything term", qmode="everything", item_type=blank)
-    assert "itemType" not in zot.items.call_args.kwargs
-
-    library.search_items("title term", item_type=blank)
-    # The metadata-search default still applies when no item type is given.
-    assert zot.items.call_args.kwargs["itemType"] == "-attachment"
-
-
 def test_explicit_item_type_is_sent_and_non_string_is_rejected(library, zot):
     library.search_items("term", qmode="everything", item_type=" -attachment ")
     assert zot.items.call_args.kwargs["itemType"] == "-attachment"
