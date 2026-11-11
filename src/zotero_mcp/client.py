@@ -591,7 +591,7 @@ class Library:
         view: Annotated[
             ReadView,
             Field(
-                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
+                description="Result projection: summary (pass its key as item_key to fulltext tools), full semantic metadata, or native Zotero raw records."
             ),
         ] = "summary",
     ) -> ItemPage:
@@ -778,7 +778,7 @@ class Library:
         view: Annotated[
             ReadView,
             Field(
-                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
+                description="Result projection: summary (pass its key as item_key to fulltext tools), full semantic metadata, or native Zotero raw records."
             ),
         ] = "metadata",
     ) -> ItemMetadataBatch:
@@ -844,7 +844,7 @@ class Library:
         view: Annotated[
             ReadView,
             Field(
-                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
+                description="Result projection: summary (pass its key as item_key to fulltext tools), full semantic metadata, or native Zotero raw records."
             ),
         ] = "summary",
     ) -> ItemPage:
@@ -869,7 +869,7 @@ class Library:
         view: Annotated[
             ReadView,
             Field(
-                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
+                description="Result projection: summary (pass its key as item_key to fulltext tools), full semantic metadata, or native Zotero raw records."
             ),
         ] = "summary",
     ) -> ItemPage:
@@ -919,7 +919,7 @@ class Library:
         view: Annotated[
             ReadView,
             Field(
-                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
+                description="Result projection: summary (pass its key as item_key to fulltext tools), full semantic metadata, or native Zotero raw records."
             ),
         ] = "summary",
     ) -> ItemPage:
@@ -943,7 +943,7 @@ class Library:
         view: Annotated[
             ReadView,
             Field(
-                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
+                description="Result projection: summary (pass its key as item_key to fulltext tools), full semantic metadata, or native Zotero raw records."
             ),
         ] = "metadata",
     ) -> ItemPage:
@@ -966,7 +966,7 @@ class Library:
         view: Annotated[
             ReadView,
             Field(
-                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
+                description="Result projection: summary (pass its key as item_key to fulltext tools), full semantic metadata, or native Zotero raw records."
             ),
         ] = "metadata",
     ) -> ItemPage:

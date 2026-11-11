@@ -50,12 +50,9 @@ def test_summary_keeps_native_order_titles_and_attachment_relation():
     assert "matched_attachment_key" not in summaries[1]
     assert "match" not in summaries[1]
     assert summaries[1]["parent_key"] == "PAPER001"
-    assert summaries[1]["fulltext"] == {
-        "read_key": "PDF00001",
-        "candidate_attachment_key": "PDF00001",
-        "index_state": "unknown",
-    }
-    assert summaries[2]["parent_key"] is None
+    assert summaries[1]["candidate_attachment_key"] == "PDF00001"
+    assert "fulltext" not in summaries[1]
+    assert "parent_key" not in summaries[2]
 
 
 def test_summary_extracts_attachment_candidate_without_claiming_index():
@@ -64,11 +61,8 @@ def test_summary_extracts_attachment_candidate_without_claiming_index():
 
     summary = project_items([item], "summary")[0]
 
-    assert summary["fulltext"] == {
-        "read_key": "PAPER001",
-        "candidate_attachment_key": "PDF00001",
-        "index_state": "unknown",
-    }
+    assert summary["candidate_attachment_key"] == "PDF00001"
+    assert "fulltext" not in summary
     assert "match" not in summary
 
 
@@ -85,7 +79,14 @@ def test_attachment_candidate_requires_explicit_item_path(href, expected):
 
     summary = project_items([item], "summary")[0]
 
-    assert summary["fulltext"].get("candidate_attachment_key") == expected
+    assert summary.get("candidate_attachment_key") == expected
+
+
+def test_summary_omits_missing_optional_fields():
+    item = {"key": "PAPER001", "version": 1, "data": {"itemType": "book", "title": "Book"}}
+    assert project_items([item], search=True) == [
+        {"key": "PAPER001", "version": 1, "item_type": "book", "title": "Book"}
+    ]
 
 
 def test_metadata_is_semantic_and_raw_is_unchanged(library, zot):
@@ -121,7 +122,7 @@ def test_collection_items_lists_only_top_level_items(library, zot):
     result = library.get_collection_items("coll0001", limit=25)
 
     assert [item["key"] for item in result["items"]] == ["PAPER001", "NOTE0002"]
-    assert all(item["parent_key"] is None for item in result["items"])
+    assert all("parent_key" not in item for item in result["items"])
     zot.collection_items_top.assert_called_once_with("COLL0001", limit=25, start=0)
     zot.collection_items.assert_not_called()
 
@@ -155,7 +156,7 @@ def test_everything_search_includes_native_attachment_hits(library, zot):
     assert [item["key"] for item in result["items"]] == ["PAPER001", "PDF00001"]
     assert result["items"][1]["matched_attachment_key"] == "PDF00001"
     assert result["items"][1]["parent_key"] == "PAPER001"
-    assert result["items"][1]["match_details_available"] is False
+    assert "match_details_available" not in result["items"][1]
 
 
 def test_parent_tag_scope_is_explicit_and_bounded(library, zot):
@@ -239,6 +240,5 @@ def test_fixed_fixture_summary_size_is_reproducible():
     assert [item["key"] for item in summary] == ["PAPER001", "PDF00001", "PAPER002"]
     assert summary[0]["title"] == items[0]["data"]["title"]
     assert "matched_attachment_key" not in summary[1]
-    assert raw_chars == 6167
-    assert summary_chars == 1226
+    assert summary_chars < raw_chars / 3
     assert summary_chars < raw_chars

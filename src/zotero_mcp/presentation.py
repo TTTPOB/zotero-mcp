@@ -56,18 +56,10 @@ class _FieldsSetModel(BaseModel):
         return result
 
 
-class FulltextEntry(_FieldsSetModel):
-    """A lightweight route to Zotero's fulltext reader."""
-
-    read_key: str | None = None
-    candidate_attachment_key: str | None = None
-    index_state: Literal["unknown"] | None = None
-
-
 class ItemSummary(_FieldsSetModel):
     """Stable discovery fields shared by search and list views."""
 
-    key: str | None = None
+    key: str | None = Field(default=None, description="Pass this key as item_key to fulltext tools.")
     version: int | None = None
     item_type: str | None = None
     title: str | None = None
@@ -76,8 +68,7 @@ class ItemSummary(_FieldsSetModel):
     doi: str | None = None
     parent_key: str | None = None
     matched_attachment_key: str | None = None
-    match_details_available: bool | None = None
-    fulltext: FulltextEntry | None = None
+    candidate_attachment_key: str | None = None
 
 
 class ItemMetadata(_FieldsSetModel):
@@ -201,26 +192,22 @@ def _summary(item: Mapping[str, Any], *, search: bool) -> dict[str, Any]:
     title = data.get("title")
     if not isinstance(title, str):
         title = data.get("filename") if isinstance(data.get("filename"), str) else ""
-    fulltext: dict[str, Any] = {"read_key": item_key or "", "index_state": "unknown"}
     candidate_key = item_key if item_type == "attachment" else preferred_attachment_key(item)
-    if candidate_key:
-        fulltext["candidate_attachment_key"] = candidate_key
     result: dict[str, Any] = {
         "key": item_key,
         "version": item.get("version") if isinstance(item.get("version"), int) else None,
         "item_type": item_type,
         "title": title,
+    }
+    optional = {
         "year": _year(data),
         "creator_summary": _creator_summary(data),
         "doi": _doi(data),
         "parent_key": parent_key,
-        "fulltext": fulltext,
+        "candidate_attachment_key": candidate_key,
+        "matched_attachment_key": item_key if search and item_type == "attachment" else None,
     }
-    if search:
-        result.update(
-            matched_attachment_key=item_key if item_type == "attachment" else None,
-            match_details_available=False,
-        )
+    result.update({name: value for name, value in optional.items() if value is not None and value != ""})
     return result
 
 

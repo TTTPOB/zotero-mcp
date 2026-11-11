@@ -22,7 +22,7 @@ async def test_read_tools_publish_models_and_input_constraints(library, zot):
         items_schema = page_schema["properties"]["items"]["items"]["anyOf"]
         assert {"$ref": "#/$defs/ItemSummary"} in items_schema
         assert {"$ref": "#/$defs/ItemMetadata"} in items_schema
-        assert page_schema["$defs"]["ItemSummary"]["properties"]["match_details_available"]
+        assert page_schema["$defs"]["ItemSummary"]["properties"]["candidate_attachment_key"]
 
         metadata_schema = tools["zotero_get_item_metadata"].outputSchema
         assert metadata_schema["title"] == "ItemMetadataBatch"
