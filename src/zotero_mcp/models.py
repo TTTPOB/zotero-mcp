@@ -101,6 +101,7 @@ class WriteResult(_WriteModel):
     )
     error: ErrorPayload | None = None
 
+
 # Keep writes as one direct object schema so MCP errors and successes have the
 # same top-level shape and are not hidden under FastMCP's generic ``result`` key.
 WriteResponse = WriteResult

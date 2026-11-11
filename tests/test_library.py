@@ -128,8 +128,6 @@ def test_unrecognized_write_response_is_not_success():
         write_result({"error": "unknown"})
 
 
-
-
 def test_note_is_child_and_escapes_plain_text(library, zot):
     library.create_note("ABCD1234", "a < b\n中文", title="A & B", tags=["tag"])
     payload = zot.create_items.call_args.args[0][0]
@@ -169,8 +167,6 @@ def test_collection_move_to_root(library, zot):
     assert zot.update_collection.call_args.args[0]["parentCollection"] is False
 
 
-
-
 def test_tag_edit_preserves_unrelated_automatic_tag(library, zot):
     result = library.batch_update_tags(["ABCD1234"], add=["new", "new"])
     assert result["results"][0]["status"] == "success"
@@ -183,10 +179,13 @@ def test_tag_edit_preserves_unrelated_automatic_tag(library, zot):
 
 def test_noop_tag_edit_skips_write(library, zot):
     result = library.batch_update_tags(["ABCD1234"], add=["keep"])
-    assert result["results"][0] == {"input_index": 0, "key": "ABCD1234", "status": "unchanged", "version": 7}
+    assert result["results"][0] == {
+        "input_index": 0,
+        "key": "ABCD1234",
+        "status": "unchanged",
+        "version": 7,
+    }
     zot.update_item.assert_not_called()
-
-
 
 
 def test_collection_membership_preserves_other_collections(library, zot):

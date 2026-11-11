@@ -409,12 +409,18 @@ def write_result(
         entry: dict[str, Any] = {
             "input_index": index,
             "status": status,
-            **({"key": source_key or _response_key(value)} if source_key or _response_key(value) else {}),
+            **(
+                {"key": source_key or _response_key(value)}
+                if source_key or _response_key(value)
+                else {}
+            ),
         }
         if status == "failed":
             http_status = value["code"]
             entry["error"] = {
-                "code": {400: INVALID_ARGUMENT, 404: NOT_FOUND, 412: VERSION_CONFLICT}.get(http_status, UNKNOWN_ERROR),
+                "code": {400: INVALID_ARGUMENT, 404: NOT_FOUND, 412: VERSION_CONFLICT}.get(
+                    http_status, UNKNOWN_ERROR
+                ),
                 "message": value["message"],
                 "retryable": False,
                 "details": {"http_status": http_status},
@@ -456,8 +462,14 @@ def _single_write_result(
     error: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build one compact single-target write outcome."""
-    entity = {name: value for name, value in {"key": entity_key, "version": version}.items() if value is not None}
-    outcome = {name: value for name, value in {"stage": stage, "error": error}.items() if value is not None}
+    entity = {
+        name: value
+        for name, value in {"key": entity_key, "version": version}.items()
+        if value is not None
+    }
+    outcome = {
+        name: value for name, value in {"stage": stage, "error": error}.items() if value is not None
+    }
     return {
         "ok": status in {"success", "unchanged"},
         "status": "success" if status == "unchanged" else status,
@@ -1777,7 +1789,9 @@ class Library:
                 }
             ]
         )
-        result.update({k: result["results"][0][k] for k in ("key", "version") if k in result["results"][0]})
+        result.update(
+            {k: result["results"][0][k] for k in ("key", "version") if k in result["results"][0]}
+        )
         return result
 
     @operation(write=True)
@@ -1875,8 +1889,12 @@ class Library:
         return _single_write_result(payload["key"])
 
     def _edit_lists(
-        self, item_keys: list[str], field: str, change: Callable[[list], list],
-        *, current_items: dict[str, Any] | None = None,
+        self,
+        item_keys: list[str],
+        field: str,
+        change: Callable[[list], list],
+        *,
+        current_items: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not 1 <= len(item_keys) <= 50:
             raise ValueError("Provide 1 to 50 item keys.")
@@ -1895,16 +1913,27 @@ class Library:
         for position, (input_index, item_key) in enumerate(indexed_keys):
             write_started = False
             try:
-                item = current_items[item_key] if current_items is not None else self.zot.item(item_key)
+                item = (
+                    current_items[item_key]
+                    if current_items is not None
+                    else self.zot.item(item_key)
+                )
                 original = item["data"].get(field, [])
                 updated = change(copy.deepcopy(original))
                 if updated == original:
                     result["results"].append(
-                        {"input_index": input_index, "key": item_key, "status": "unchanged", "version": item["version"]}
+                        {
+                            "input_index": input_index,
+                            "key": item_key,
+                            "status": "unchanged",
+                            "version": item["version"],
+                        }
                     )
                     continue
                 write_started = True
-                stored = self._update_item({"key": item_key, "version": item["version"], field: updated})
+                stored = self._update_item(
+                    {"key": item_key, "version": item["version"], field: updated}
+                )
                 version = _response_version(stored)
                 entry = {"input_index": input_index, "key": item_key, "status": "success"}
                 if version is not None:
@@ -2097,7 +2126,9 @@ class Library:
                 },
             )
             payload = error.as_dict()["error"]
-            return _single_write_result(attachment_key, status="unknown", stage="upload", error=payload)
+            return _single_write_result(
+                attachment_key, status="unknown", stage="upload", error=payload
+            )
 
         # Pyzotero returns three lists here, distinct from create_items' indexed maps.
         if not isinstance(upload, dict) or not all(
@@ -2109,7 +2140,9 @@ class Library:
                 details={"attachment_key": attachment_key, "stage": "upload"},
             )
             payload = failure.as_dict()["error"]
-            return _single_write_result(attachment_key, status="unknown", stage="upload", error=payload)
+            return _single_write_result(
+                attachment_key, status="unknown", stage="upload", error=payload
+            )
 
         success, failures, unchanged = (
             upload["success"],
@@ -2127,7 +2160,9 @@ class Library:
                 },
             )
             payload = failure.as_dict()["error"]
-            return _single_write_result(attachment_key, status="unknown", stage="upload", error=payload)
+            return _single_write_result(
+                attachment_key, status="unknown", stage="upload", error=payload
+            )
 
         status = "success" if success else "unchanged"
         uploaded = (success or unchanged)[0]
@@ -2221,7 +2256,9 @@ class Library:
                 return _single_write_result(existing_key, status="unknown", error=error)
             existing_digest = hashlib.sha256(existing_raw).hexdigest()
             if existing_digest == digest:
-                return _single_write_result(existing_key, _response_version(existing), status="unchanged")
+                return _single_write_result(
+                    existing_key, _response_version(existing), status="unchanged"
+                )
             error = {
                 "code": ATTACHMENT_CONTENT_CONFLICT,
                 "message": "A different fixed Markdown attachment already exists; no duplicate was created.",

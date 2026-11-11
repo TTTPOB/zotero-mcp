@@ -29,7 +29,14 @@ def test_native_create_version_can_be_used_directly_for_an_update(mcp):
     assert [entry["input_index"] for entry in result["results"]] == [0, 1]
     first, second = (entry["key"] for entry in result["results"])
     # Use the create result directly, without reading the new item first.
-    changed = mcp("update_item", {"item_key": first, "version": result["results"][0]["version"], "changes": {"title": "Live added one updated"}})
+    changed = mcp(
+        "update_item",
+        {
+            "item_key": first,
+            "version": result["results"][0]["version"],
+            "changes": {"title": "Live added one updated"},
+        },
+    )
     assert changed["ok"]
     assert read_item(mcp, first)["data"]["title"] == "Live added one updated"
     second_item = read_item(mcp, second)
@@ -63,7 +70,10 @@ def test_update_version_is_reusable_without_an_intervening_read(mcp, new_item):
         {"item_key": key, "version": version, "changes": {"title": "Live renamed"}},
     )
     assert result["ok"] and result["key"] == key
-    again = mcp("update_item", {"item_key": key, "version": result["version"], "changes": {"title": "Live renamed again"}})
+    again = mcp(
+        "update_item",
+        {"item_key": key, "version": result["version"], "changes": {"title": "Live renamed again"}},
+    )
     record = read_item(mcp, key)
     assert again["version"] == again["results"][0]["version"] == record["version"]
     assert record["data"]["title"] == "Live renamed again"
@@ -153,9 +163,18 @@ def test_batch_update_tags_adds_and_removes_preserving_others(mcp, new_item):
     result = mcp(
         "batch_update_tags", {"item_keys": [first, second], "add": ["added"], "remove": ["drop"]}
     )
-    assert result["ok"] and sorted(entry["key"] for entry in result["results"] if entry["status"] == "success") == sorted([first, second])
+    assert result["ok"] and sorted(
+        entry["key"] for entry in result["results"] if entry["status"] == "success"
+    ) == sorted([first, second])
     # Consume the batch's returned item version before any read.
-    updated = mcp("update_item", {"item_key": first, "version": result["results"][0]["version"], "changes": {"title": "After tag batch"}})
+    updated = mcp(
+        "update_item",
+        {
+            "item_key": first,
+            "version": result["results"][0]["version"],
+            "changes": {"title": "After tag batch"},
+        },
+    )
     assert updated["version"] == version_of(mcp, first)
     assert result["results"][1]["version"] == version_of(mcp, second)
     assert tag_names(mcp, first) == {"keep", "added"}
@@ -174,8 +193,17 @@ def test_manage_collection_items_add_and_remove_top_level_items(mcp, new_item):
         "manage_collection_items",
         {"collection_key": collection, "item_keys": [first, second], "action": "add"},
     )
-    assert added["ok"] and sorted(entry["key"] for entry in added["results"] if entry["status"] == "success") == sorted([first, second])
-    updated = mcp("update_item", {"item_key": first, "version": added["results"][0]["version"], "changes": {"title": "After membership batch"}})
+    assert added["ok"] and sorted(
+        entry["key"] for entry in added["results"] if entry["status"] == "success"
+    ) == sorted([first, second])
+    updated = mcp(
+        "update_item",
+        {
+            "item_key": first,
+            "version": added["results"][0]["version"],
+            "changes": {"title": "After membership batch"},
+        },
+    )
     assert updated["version"] == version_of(mcp, first)
     assert added["results"][1]["version"] == version_of(mcp, second)
     assert set(keys(mcp("get_collection_items", {"collection_key": collection}))) == {
@@ -412,6 +440,7 @@ def test_update_collection_returns_the_new_version(mcp):
     )
     assert chained["version"] == current() > result["version"]
 
+
 def test_native_create_data_reports_field_relocation_and_warns(mcp, library):
     sent = {"itemType": "book", "title": "Live relocation", "publicationTitle": "Some Journal"}
     # Pin the upstream contract used to report warnings without another GET.
@@ -422,19 +451,36 @@ def test_native_create_data_reports_field_relocation_and_warns(mcp, library):
     assert native["version"] == stored["version"]
     assert native["data"] == stored["data"]
     result = mcp("add_items", {"items": [sent]})
-    assert "publicationTitle on book is absent from stored data; extra gained content" in result["results"][0]["warnings"][0]
-    assert read_item(mcp, result["results"][0]["key"], view="raw")["data"]["extra"] == "Publication Title: Some Journal"
+    assert (
+        "publicationTitle on book is absent from stored data; extra gained content"
+        in result["results"][0]["warnings"][0]
+    )
+    assert (
+        read_item(mcp, result["results"][0]["key"], view="raw")["data"]["extra"]
+        == "Publication Title: Some Journal"
+    )
 
 
 def test_native_create_data_reports_creator_replacement_and_warns(mcp, library):
-    sent = {"itemType": "journalArticle", "title": "Live creator replacement",
-            "creators": [{"creatorType": "director", "firstName": "A", "lastName": "B"}]}
+    sent = {
+        "itemType": "journalArticle",
+        "title": "Live creator replacement",
+        "creators": [{"creatorType": "director", "firstName": "A", "lastName": "B"}],
+    }
     native = library.zot.create_items([sent])["successful"]["0"]
     assert native["data"]["creators"][0]["creatorType"] == "author"
     assert native["data"] == library.zot.item(native["key"])["data"]
     result = mcp("add_items", {"items": [sent]})
-    assert "creators[0].creatorType on journalArticle changed from director to author" in result["results"][0]["warnings"][0]
-    changed = mcp("update_item", {"item_key": native["key"], "version": native["version"],
-                                 "changes": {"creators": sent["creators"]}})
+    assert (
+        "creators[0].creatorType on journalArticle changed from director to author"
+        in result["results"][0]["warnings"][0]
+    )
+    changed = mcp(
+        "update_item",
+        {
+            "item_key": native["key"],
+            "version": native["version"],
+            "changes": {"creators": sent["creators"]},
+        },
+    )
     assert "changed from director to author" in changed["results"][0]["warnings"][0]
-
