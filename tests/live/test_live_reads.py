@@ -37,7 +37,7 @@ def test_search_items_everything_mode_hits_attachment_with_parent(mcp, seed):
     page = mcp("search_items", {"query": PDF_NEEDLE, "qmode": "everything"})
     hit = next(item for item in page["items"] if item["key"] == seed.pdf)
     assert hit["parent_key"] == seed.alpha
-    assert hit["matched_attachment_key"] == seed.pdf
+    assert hit["item_type"] == "attachment"
     assert hit["parent"] == {
         "title": "Live alpha paper",
         "creator_summary": "Ada Live",

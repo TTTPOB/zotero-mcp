@@ -58,6 +58,14 @@ class _FieldsSetModel(BaseModel):
         return result
 
 
+class ParentContext(_FieldsSetModel):
+    """Enough of a parent item to recognise the paper behind a child hit."""
+
+    title: str | None = None
+    creator_summary: str | None = None
+    year: int | None = None
+
+
 class ItemSummary(_FieldsSetModel):
     """Stable discovery fields shared by search and list views."""
 
@@ -71,9 +79,12 @@ class ItemSummary(_FieldsSetModel):
     creator_summary: str | None = None
     doi: str | None = None
     parent_key: str | None = None
-    matched_attachment_key: str | None = None
-    candidate_attachment_key: str | None = None
-    parent: dict[str, Any] | None = None
+    candidate_attachment_key: str | None = Field(
+        default=None, description="Zotero's best attachment for this paper, when it has one."
+    )
+    parent: ParentContext | None = Field(
+        default=None, description="The paper a child search hit belongs to."
+    )
 
 
 class ItemMetadata(_FieldsSetModel):
@@ -187,7 +198,7 @@ def _doi(data: Mapping[str, Any]) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _summary(item: Mapping[str, Any], *, search: bool) -> dict[str, Any]:
+def _summary(item: Mapping[str, Any]) -> dict[str, Any]:
     data = _data(item)
     item_key = item.get("key")
     item_key = item_key if isinstance(item_key, str) else None
@@ -201,7 +212,6 @@ def _summary(item: Mapping[str, Any], *, search: bool) -> dict[str, Any]:
         note = re.sub(r"(?i)<(?:br\s*/?|/?(?:p|div|h[1-6]|li))\b[^>]*>", "\n", data.get("note", ""))
         text = html.unescape(re.sub(r"<[^>]*>", "", note))
         title = next((line.strip()[:120] for line in text.splitlines() if line.strip()), "")
-    candidate_key = item_key if item_type == "attachment" else preferred_attachment_key(item)
     result: dict[str, Any] = {
         "key": item_key,
         "version": item.get("version") if isinstance(item.get("version"), int) else None,
@@ -213,8 +223,7 @@ def _summary(item: Mapping[str, Any], *, search: bool) -> dict[str, Any]:
         "creator_summary": _creator_summary(data),
         "doi": _doi(data),
         "parent_key": parent_key,
-        "candidate_attachment_key": candidate_key,
-        "matched_attachment_key": item_key if search and item_type == "attachment" else None,
+        "candidate_attachment_key": preferred_attachment_key(item),
     }
     result.update(
         {name: value for name, value in optional.items() if value is not None and value != ""}
@@ -235,20 +244,18 @@ def _metadata(item: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def project_item(
-    item: Mapping[str, Any], view: ReadView = "summary", *, search: bool = False
-) -> dict[str, Any]:
+def project_item(item: Mapping[str, Any], view: ReadView = "summary") -> dict[str, Any]:
     """Project one native Zotero item without mutating the source object."""
     view = normalize_view(view)
     if view == "raw":
         return copy.deepcopy(dict(item))
     if view == "metadata":
         return _metadata(item)
-    return _summary(item, search=search)
+    return _summary(item)
 
 
 def project_items(
-    items: Sequence[Mapping[str, Any]], view: ReadView = "summary", *, search: bool = False
+    items: Sequence[Mapping[str, Any]], view: ReadView = "summary"
 ) -> list[dict[str, Any]]:
     """Project items while preserving the upstream order and item count."""
-    return [project_item(item, view, search=search) for item in items]
+    return [project_item(item, view) for item in items]

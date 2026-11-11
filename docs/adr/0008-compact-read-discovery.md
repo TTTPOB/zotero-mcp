@@ -14,7 +14,7 @@
 ## 决定
 
 1. 用一个函数从父文献 `links.attachment.href` 提取最佳附件 key，摘要和全文选择共用。只有它确实属于该文献的子附件候选时才优先使用；没有首选时仍按唯一附件、唯一 PDF、歧义错误处理，不逐个试读。
-2. 摘要始终保留 `key`、`version`、`item_type`、`title`。可选的年份、作者、DOI、父 key、命中附件 key 和候选附件 key 缺失时省略。删除重复全文入口及固定状态，顶层提供 `candidate_attachment_key`；`key` 就是全文工具接受的 `item_key`。
+2. 摘要始终保留 `key`、`version`、`item_type`、`title`。可选的年份、作者、DOI、父 key 和候选附件 key 缺失时省略。删除重复全文入口及固定状态；`matched_attachment_key` 也删除，因为它恒等于附件命中自身的 `key`（评审时由 Agent 补充）。父文献在顶层提供 `candidate_attachment_key`，附件自身不提供；`key` 就是全文工具接受的 `item_key`。
 3. 搜索摘要中的子命中增加 `parent`，含父条目的标题、作者摘要和年份，缺失字段省略。当前页父 key 统一批量请求，父标签筛选共用同一批数据；没有子命中时不请求父条目。搜索分页仍使用原搜索页的响应头，不用父读取覆盖。
 4. 各列表的笔记摘要标题使用去除 HTML 后的第一个非空行，最多 120 字符。普通条目保留完整标题。
 5. `get_collections` 默认返回 `key`、`version`、`name`、`item_count`，子集合另有 `parent_key`；`view="raw"` 保留原生对象。`item_count` 使用 `meta.numItems`。真实种子库中，一个含论文及其 PDF、笔记的集合返回 1，空子集合返回 0。

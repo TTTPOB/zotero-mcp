@@ -50,7 +50,7 @@ def test_summary_keeps_native_order_titles_and_attachment_relation():
     assert "matched_attachment_key" not in summaries[1]
     assert "match" not in summaries[1]
     assert summaries[1]["parent_key"] == "PAPER001"
-    assert summaries[1]["candidate_attachment_key"] == "PDF00001"
+    assert "candidate_attachment_key" not in summaries[1]
     assert "fulltext" not in summaries[1]
     assert "parent_key" not in summaries[2]
 
@@ -77,7 +77,7 @@ def test_attachment_candidate_does_not_treat_a_filename_as_a_key():
 
 def test_summary_omits_missing_optional_fields():
     item = {"key": "PAPER001", "version": 1, "data": {"itemType": "book", "title": "Book"}}
-    assert project_items([item], search=True) == [
+    assert project_items([item]) == [
         {"key": "PAPER001", "version": 1, "item_type": "book", "title": "Book"}
     ]
 
@@ -175,7 +175,7 @@ def test_everything_search_includes_native_attachment_hits(library, zot):
 
     assert "itemType" not in zot.items.call_args_list[0].kwargs
     assert [item["key"] for item in result["items"]] == ["PAPER001", "PDF00001"]
-    assert result["items"][1]["matched_attachment_key"] == "PDF00001"
+    assert "candidate_attachment_key" not in result["items"][1]
     assert result["items"][1]["parent_key"] == "PAPER001"
     assert "match_details_available" not in result["items"][1]
 

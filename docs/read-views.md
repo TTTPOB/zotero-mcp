@@ -10,9 +10,9 @@
 | `metadata` | `key`、`version`、`item_type`、`parent_key` 和完整语义 `data`，不带顶层 `library`/`links` | `get_item_metadata`（每项的 `item`）、`get_notes`、`get_annotations` |
 | `raw` | Zotero 原生记录的深拷贝，不删字段 | 支持 `view` 的工具均可显式请求 |
 
-摘要始终包含 `key`、`version`、`item_type`、`title`。`year`、`creator_summary`、`doi`、`parent_key`、`matched_attachment_key`、`candidate_attachment_key` 没有值时省略，不返回 `null` 或空字符串占位。普通条目的完整标题保留；笔记以去除 HTML 后的第一个非空行作为标题，最多 120 个字符。
+摘要始终包含 `key`、`version`、`item_type`、`title`。`year`、`creator_summary`、`doi`、`parent_key`、`candidate_attachment_key` 没有值时省略，不返回 `null` 或空字符串占位。普通条目的完整标题保留；笔记以去除 HTML 后的第一个非空行作为标题，最多 120 个字符。
 
-`key` 可以直接作为 `get_item_fulltext` 或 `find_item_fulltext` 的 `item_key`。附件摘要的 `candidate_attachment_key` 是附件自身的 key；父文献则从 Zotero 的 `links.attachment.href` 提取最佳附件 key。该字段只是候选，不保证索引可读。摘要不含重复的全文入口对象或固定为未知的索引状态。
+`key` 可以直接作为 `get_item_fulltext` 或 `find_item_fulltext` 的 `item_key`。父文献的 `candidate_attachment_key` 是从 Zotero 的 `links.attachment.href` 提取的最佳附件 key，只是候选，不保证索引可读；附件自身的摘要没有这个字段，它的 `key` 就是附件 key。摘要不含重复的全文入口对象或固定为未知的索引状态。
 
 `metadata.data` 保留摘要、作者、标签、集合及类型特有字段。它不是可直接写回的 payload；更新仍使用变化字段补丁和本地 `version`。MCP 输出只序列化业务结果实际设置的字段，因此 `raw` 不会因 schema 默认值新增字段。
 
@@ -30,7 +30,7 @@
 
 `qmode="everything"` 默认不发送 `itemType`，保留附件全文命中。`qmode="titleCreatorYear"` 未指定类型时使用 `-attachment`。显式 `item_type` 会先去除首尾空白；空字符串或纯空白等同于未提供。
 
-普通搜索保留实际命中对象的 `key`。附件命中提供 `matched_attachment_key`；子附件、子笔记等提供 `parent_key`。`summary` 还提供 `parent`，内含父条目的 `title`、`creator_summary`、`year`，缺失值同样省略。不会编造 snippet、字段命中或相关性分数，也不会把子命中替换成父文献。
+普通搜索保留实际命中对象的 `key`。附件命中的 `item_type` 是 `attachment`，`key` 就是命中的附件；子附件、子笔记等提供 `parent_key`。`summary` 还提供 `parent`，内含父条目的 `title`、`creator_summary`、`year`，缺失值同样省略。不会编造 snippet、字段命中或相关性分数，也不会把子命中替换成父文献。
 
 父条目按当前原生页的不同 key 统一批量读取，不逐条请求。没有子命中时不读取父条目；`metadata`、`raw` 仅在父标签筛选需要时读取父条目。
 

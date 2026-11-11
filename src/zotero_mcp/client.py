@@ -194,11 +194,10 @@ def page(
     consumed_count: int | None = None,
     links: Mapping[str, Any] | None = None,
     headers: Mapping[str, Any] | None = None,
-    search: bool = False,
 ) -> ItemPage:
     """Build a projected page using native response pagination when available."""
     normalize_view(view)
-    projected = project_items(items, view, search=search)
+    projected = project_items(items, view)
     upstream_count = len(items) if consumed_count is None else consumed_count
     if type(upstream_count) is not int or upstream_count < 0:
         raise ValueError("consumed_count must be a nonnegative integer.")
@@ -535,7 +534,6 @@ class Library:
         *,
         view: ReadView = "raw",
         consumed_count: int | None = None,
-        search: bool = False,
     ) -> ItemPage:
         normalize_view(view)
         request = getattr(self.zot, "request", None)
@@ -547,7 +545,6 @@ class Library:
             consumed_count=consumed_count,
             links=getattr(self.zot, "links", None),
             headers=getattr(request, "headers", None),
-            search=search,
         )
 
     @operation()
@@ -590,7 +587,7 @@ class Library:
         view: Annotated[
             ReadView,
             Field(
-                description="Result projection: summary (pass its key as item_key to fulltext tools), full semantic metadata, or native Zotero raw records."
+                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
             ),
         ] = "summary",
     ) -> ItemPage:
@@ -602,7 +599,7 @@ class Library:
         historical ``-attachment`` default. ``matched_item`` applies tags to the
         native hit; ``parent`` applies them to its parent when it has one; ``either``
         accepts either level. Attachment hits are not deduplicated into parent items.
-        Their summary includes ``matched_attachment_key`` and ``parent_key``.
+        Their summary includes ``parent_key`` and the parent's title, creators and year.
         Identifier lookup: when the whole query is one DOI (bare, ``doi:`` prefix,
         or a doi.org URL; case-insensitive) or one ISBN-10/13 (hyphens and spaces
         optional; the ISBN-10 and ISBN-13 forms of one book both match), only
@@ -694,7 +691,6 @@ class Library:
             consumed_count=len(native_items),
             links=search_links,
             headers=search_headers,
-            search=True,
         )
         if view == "summary":
             for summary in result["items"]:
@@ -758,7 +754,6 @@ class Library:
             offset,
             view=view,
             headers={"Total-Results": len(matches)},
-            search=True,
         )
         lookup: dict[str, Any] = {
             "type": identifier.kind,
@@ -793,7 +788,7 @@ class Library:
         view: Annotated[
             ReadView,
             Field(
-                description="Result projection: summary (pass its key as item_key to fulltext tools), full semantic metadata, or native Zotero raw records."
+                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
             ),
         ] = "metadata",
     ) -> ItemMetadataBatch:
@@ -859,7 +854,7 @@ class Library:
         view: Annotated[
             ReadView,
             Field(
-                description="Result projection: summary (pass its key as item_key to fulltext tools), full semantic metadata, or native Zotero raw records."
+                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
             ),
         ] = "summary",
     ) -> ItemPage:
@@ -909,7 +904,7 @@ class Library:
         view: Annotated[
             ReadView,
             Field(
-                description="Result projection: summary (pass its key as item_key to fulltext tools), full semantic metadata, or native Zotero raw records."
+                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
             ),
         ] = "summary",
     ) -> ItemPage:
@@ -918,7 +913,7 @@ class Library:
         Child attachments and notes are not listed (Zotero's non-top endpoint would
         add the children of every member, taking up pages and the total). Standalone
         attachments and notes are top-level and still appear. Use get_item_children
-        for a paper's children; a summary's fulltext.candidate_attachment_key names
+        for a paper's children; a summary's candidate_attachment_key names
         its best attachment. Request metadata or raw when needed.
         """
         collection = key(collection_key)
@@ -959,7 +954,7 @@ class Library:
         view: Annotated[
             ReadView,
             Field(
-                description="Result projection: summary (pass its key as item_key to fulltext tools), full semantic metadata, or native Zotero raw records."
+                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
             ),
         ] = "summary",
     ) -> ItemPage:
@@ -983,7 +978,7 @@ class Library:
         view: Annotated[
             ReadView,
             Field(
-                description="Result projection: summary (pass its key as item_key to fulltext tools), full semantic metadata, or native Zotero raw records."
+                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
             ),
         ] = "metadata",
     ) -> ItemPage:
@@ -1006,7 +1001,7 @@ class Library:
         view: Annotated[
             ReadView,
             Field(
-                description="Result projection: summary (pass its key as item_key to fulltext tools), full semantic metadata, or native Zotero raw records."
+                description="Result projection: summary, full semantic metadata, or native Zotero raw records."
             ),
         ] = "metadata",
     ) -> ItemPage:
